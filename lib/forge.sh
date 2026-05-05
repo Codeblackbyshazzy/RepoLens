@@ -13,12 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# RepoLens — Forge provider detection
-#
-# Foundation of the multi-forge roadmap (issues #57 → #64). This module is
-# intentionally narrow: a single pure function that classifies a git remote
-# URL by forge provider. No CLI wiring, no auth/side-effectful wrappers —
-# those land in later tickets.
+# RepoLens — Forge provider detection and wrapper dispatch
 
 set -uo pipefail
 
@@ -39,25 +34,8 @@ set -uo pipefail
 #   Exit code is always 0 — callers parse stdout.
 detect_forge_provider() {
   local url="${1:-}"
-  if [[ -z "$url" ]]; then
-    printf 'unknown\n'
-    return 0
-  fi
-
-  local host=""
-
-  # Form 1: scp-like SSH — user@host:path (no scheme, colon separates host from path).
-  # Must be checked before the URL-with-scheme form because it has no "://".
-  if [[ "$url" =~ ^[^@/:]+@([^:/]+): ]]; then
-    host="${BASH_REMATCH[1]}"
-  # Form 2: URL with scheme — scheme://[user@]host[:port]/path
-  elif [[ "$url" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://([^/]+)(/|$) ]]; then
-    local authority="${BASH_REMATCH[1]}"
-    # Strip optional userinfo prefix
-    authority="${authority#*@}"
-    # Strip optional :port suffix
-    host="${authority%%:*}"
-  fi
+  local host
+  host="$(_forge_remote_host "$url")"
 
   if [[ -z "$host" ]]; then
     printf 'unknown\n'
@@ -75,6 +53,124 @@ detect_forge_provider() {
     *gitea*)       printf 'tea\n' ;;
     *)             printf 'unknown\n' ;;
   esac
+  return 0
+}
+
+# detect_forge_host <remote_url>
+#   Prints the host/base URL to pass to `fj -H`.
+#
+#   Codeberg and SSH remotes use the bare host. HTTPS self-hosted Forgejo
+#   remotes preserve scheme, port, and any base path before owner/repo.
+#   Plain HTTP remotes are rejected by returning an empty binding so callers do
+#   not pass authenticated fj traffic over an insecure transport.
+#   Exit code is always 0; malformed or empty input prints an empty string.
+detect_forge_host() {
+  local url="${1:-}"
+  if [[ -z "$url" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  local host
+  host="$(_forge_remote_host "$url")"
+  if [[ -z "$host" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  if [[ "$url" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://([^/]+)(/.*)?$ ]]; then
+    local scheme="${BASH_REMATCH[1],,}"
+    local authority="${BASH_REMATCH[2]}"
+    local path="${BASH_REMATCH[3]:-}"
+
+    if [[ "$scheme" == "http" ]]; then
+      printf '\n'
+      return 0
+    fi
+
+    if [[ "$scheme" == "https" ]]; then
+      if [[ "$host" == "codeberg.org" ]]; then
+        printf 'codeberg.org\n'
+        return 0
+      fi
+
+      authority="${authority##*@}"
+      local host_part="${authority%%:*}"
+      local port_part=""
+      if [[ "$authority" == *:* ]]; then
+        port_part=":${authority#*:}"
+      fi
+
+      local base_path
+      base_path="$(_forge_http_base_path "$path")"
+      printf '%s://%s%s%s\n' "$scheme" "${host_part,,}" "$port_part" "$base_path"
+      return 0
+    fi
+
+    if [[ "$scheme" == "ssh" ]]; then
+      printf '%s\n' "$host"
+      return 0
+    fi
+
+    printf '\n'
+    return 0
+  fi
+
+  printf '%s\n' "$host"
+  return 0
+}
+
+_forge_remote_host() {
+  local url="${1:-}"
+  local host=""
+
+  if [[ -z "$url" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  # Form 1: scp-like SSH — user@host:path (no scheme, colon separates host from path).
+  if [[ "$url" =~ ^[^@/:]+@([^:/]+): ]]; then
+    host="${BASH_REMATCH[1]}"
+  # Form 2: URL with scheme — scheme://[user@]host[:port]/path
+  elif [[ "$url" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://([^/]+)(/|$) ]]; then
+    local authority="${BASH_REMATCH[1]}"
+    authority="${authority##*@}"
+    host="${authority%%:*}"
+  fi
+
+  printf '%s\n' "${host,,}"
+  return 0
+}
+
+_forge_http_base_path() {
+  local path="${1:-}"
+  path="${path%%\?*}"
+  path="${path%%#*}"
+  while [[ "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  path="${path#/}"
+
+  if [[ -z "$path" ]]; then
+    printf ''
+    return 0
+  fi
+
+  local -a parts=()
+  IFS='/' read -r -a parts <<< "$path"
+  local count="${#parts[@]}"
+  if (( count <= 2 )); then
+    printf ''
+    return 0
+  fi
+
+  local base="" i
+  for ((i = 0; i < count - 2; i++)); do
+    [[ -n "${parts[$i]}" ]] || continue
+    base+="/${parts[$i]}"
+  done
+  printf '%s' "$base"
   return 0
 }
 
@@ -103,7 +199,7 @@ require_forge_cli() {
       ;;
     fj)
       command -v fj >/dev/null 2>&1 \
-        || die "fj not found — install from https://codeberg.org/Codeberg/fj"
+        || die "fj not found — install from https://codeberg.org/forgejo-contrib/forgejo-cli"
       ;;
     *)
       die "require_forge_cli: unknown provider '$provider' (expected gh|tea|fj)"
@@ -120,7 +216,8 @@ require_forge_cli() {
 #         exact README-troubleshooting message.
 #   tea → `tea login list` — exit 0 ok, non-zero triggers die with a
 #         Gitea-specific setup hint.
-#   fj  → die "not yet implemented" (lands in #62).
+#   fj  → `fj -H <host> whoami` — exit 0 ok, non-zero triggers die with
+#         a Forgejo-specific setup hint.
 #
 #   Callers in repolens.sh keep their outer `if ! $LOCAL_MODE` gate —
 #   this wrapper is provider-aware but not mode-aware.
@@ -137,7 +234,10 @@ forge_auth_status() {
         || die "tea is not authenticated. Run 'tea login add'."
       ;;
     fj)
-      die "forge_auth_status: fj backend not yet implemented (see #62)"
+      [[ -n "${FORGE_HOST:-}" ]] \
+        || die "forge_auth_status: fj backend requires FORGE_HOST"
+      fj -H "$FORGE_HOST" whoami >/dev/null 2>&1 \
+        || die "fj is not authenticated. Run 'fj -H $FORGE_HOST auth login' or 'fj -H $FORGE_HOST auth add-key <user>'."
       ;;
     *)
       die "forge_auth_status: unknown provider '${FORGE_PROVIDER:-}' (expected gh|tea|fj)"
@@ -155,7 +255,8 @@ forge_auth_status() {
 #         with stderr suppressed and exit ignored.
 #   tea → `tea labels create --name <label> --color <color> ...`
 #         bound to $FORGE_PROJECT_PATH/$FORGE_REMOTE_NAME or $FORGE_TEA_LOGIN.
-#   fj  → die "not yet implemented" (lands in #62).
+#   fj  → `fj -H <host> repo labels <owner/repo> create <label> <color>`
+#         with stderr suppressed and exit ignored.
 #
 #   All three args are required; any missing arg is a caller bug and
 #   dies loudly rather than pass garbage to the forge CLI.
@@ -182,7 +283,9 @@ forge_label_create() {
       tea labels create --name "$label" --color "$color" "${tea_target_flags[@]}" 2>/dev/null || true
       ;;
     fj)
-      die "forge_label_create: fj backend not yet implemented (see #62)"
+      [[ -n "${FORGE_HOST:-}" ]] \
+        || die "forge_label_create: fj backend requires FORGE_HOST"
+      fj -H "$FORGE_HOST" repo labels "$repo" create "$label" "$color" 2>/dev/null || true
       ;;
     *)
       die "forge_label_create: unknown provider '${FORGE_PROVIDER:-}' (expected gh|tea|fj)"
@@ -202,7 +305,8 @@ forge_label_create() {
 #   tea -> `tea issues list ... --labels <label> --state open --limit 1000
 #          --output json`, bound to $FORGE_PROJECT_PATH/$FORGE_REMOTE_NAME or
 #          $FORGE_TEA_LOGIN, counted via jq.
-#   fj  -> die "not yet implemented" (lands in #62).
+#   fj  -> `fj -H <host> --style minimal issue search --repo <owner/repo>
+#          --labels <label> --state open`, parsed from the leading count line.
 #
 #   Both args are required; missing args are caller bugs and die loudly.
 #
@@ -293,7 +397,40 @@ forge_issue_list_count() {
       return 0
       ;;
     fj)
-      die "forge_issue_list_count: fj backend not yet implemented (see #62)"
+      [[ -n "${FORGE_HOST:-}" ]] \
+        || die "forge_issue_list_count: fj backend requires FORGE_HOST"
+
+      local fj_err fj_out fj_rc
+      fj_err="$(mktemp 2>/dev/null)" || fj_err=""
+      if [[ -n "$fj_err" ]]; then
+        fj_out="$(fj -H "$FORGE_HOST" --style minimal issue search \
+          --repo "$repo" --labels "$label" --state open 2>"$fj_err")"
+        fj_rc=$?
+      else
+        fj_out="$(fj -H "$FORGE_HOST" --style minimal issue search \
+          --repo "$repo" --labels "$label" --state open 2>/dev/null)"
+        fj_rc=$?
+      fi
+      if [[ "$fj_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$fj_err" && -s "$fj_err" ]]; then
+          first_err="$(head -n1 "$fj_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$fj_err" ]] && rm -f "$fj_err"
+        _forge_warn "forge_issue_list_count: fj failed for repo=$repo label=$label rc=$fj_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$fj_err" ]] && rm -f "$fj_err"
+
+      local first_line
+      first_line="$(printf '%s\n' "$fj_out" | sed -n '1p')"
+      if [[ "$first_line" =~ ^[[:space:]]*([0-9]+)[[:space:]]+issues?[[:space:]]*$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+      fi
+
+      _forge_warn "forge_issue_list_count: could not parse fj output for repo=$repo label=$label first_line='${first_line:-<empty>}'"
+      return 1
       ;;
     *)
       die "forge_issue_list_count: unknown provider '${FORGE_PROVIDER:-}' (expected gh|tea|fj)"

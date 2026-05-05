@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for lib/forge.sh — detect_forge_provider (issue #57)
+# Tests for lib/forge.sh — detect_forge_provider (issue #57) and
+# detect_forge_host (issue #62)
 #
 # Behavioral contract (from the issue):
 #   detect_forge_provider <remote_url>
@@ -28,6 +29,12 @@
 #     git@host:owner/repo[.git]                        (scp-like)
 #     ssh://[user@]host[:port]/owner/repo[.git]
 #   Exit code is always 0 — callers parse stdout.
+#
+# Issue #62 adds detect_forge_host <remote_url> for fj --host binding:
+#   - Codeberg remotes map to codeberg.org.
+#   - SSH remotes map to the bare host.
+#   - HTTPS self-hosted Forgejo remotes preserve scheme, port, and base path.
+#   - Plain HTTP remotes produce no binding.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,6 +61,25 @@ assert_detect() {
   fi
 }
 
+assert_host() {
+  local desc="$1" input="$2" expected="$3"
+  TOTAL=$((TOTAL + 1))
+  local actual rc
+  actual="$(detect_forge_host "$input" 2>/dev/null)"
+  rc=$?
+  if [[ "$rc" -eq 0 && "$actual" == "$expected" ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc"
+    echo "    Input:    $input"
+    echo "    Expected: $expected"
+    echo "    Actual:   $actual"
+    echo "    rc:       $rc"
+  fi
+}
+
 echo ""
 echo "=== Test Suite: detect_forge_provider (issue #57) ==="
 echo ""
@@ -70,6 +96,51 @@ echo "Codeberg host (codeberg.org) → fj"
 assert_detect "codeberg.org HTTPS"        "https://codeberg.org/owner/repo.git"      "fj"
 assert_detect "codeberg.org SSH scp-like" "git@codeberg.org:owner/repo.git"          "fj"
 assert_detect "codeberg.org SSH URL form" "ssh://git@codeberg.org/owner/repo.git"    "fj"
+
+echo ""
+echo "Forgejo host binding for fj --host"
+assert_host "Codeberg HTTPS maps to bare host" \
+  "https://codeberg.org/owner/repo.git" "codeberg.org"
+assert_host "Codeberg HTTPS maps uppercase host to bare lowercase host" \
+  "https://Codeberg.Org/owner/repo.git" "codeberg.org"
+assert_host "Codeberg SSH scp-like maps to bare host" \
+  "git@codeberg.org:owner/repo.git" "codeberg.org"
+assert_host "Codeberg SSH URL form maps to bare host" \
+  "ssh://git@codeberg.org/owner/repo.git" "codeberg.org"
+assert_host "self-hosted HTTPS port is preserved" \
+  "https://forge.example.com:3000/owner/repo.git" "https://forge.example.com:3000"
+assert_host "self-hosted HTTPS base path is preserved" \
+  "https://forge.example.com/git/owner/repo.git" "https://forge.example.com/git"
+assert_host "self-hosted HTTP base path has no fj host binding" \
+  "http://forge.example.com/git/owner/repo.git" ""
+assert_host "Codeberg HTTP has no fj host binding" \
+  "http://codeberg.org/owner/repo.git" ""
+assert_host "Codeberg git protocol has no fj host binding" \
+  "git://codeberg.org/owner/repo.git" ""
+assert_host "self-hosted HTTPS nested base path is preserved" \
+  "https://forge.example.com/base/git/owner/repo.git" "https://forge.example.com/base/git"
+assert_host "self-hosted HTTPS userinfo is stripped while port and base path stay" \
+  "https://alice@Forge.Example.com:3000/git/owner/repo.git" "https://forge.example.com:3000/git"
+assert_host "self-hosted HTTPS query string is ignored when deriving base path" \
+  "https://forge.example.com/git/owner/repo.git?tab=files" "https://forge.example.com/git"
+assert_host "self-hosted SSH URL with port maps to bare API host" \
+  "ssh://git@forge.example.com:2222/owner/repo.git" "forge.example.com"
+assert_host "empty remote has no fj host binding" "" ""
+assert_host "malformed remote has no fj host binding" "not-a-url" ""
+
+TOTAL=$((TOTAL + 1))
+if actual="$(detect_forge_host 2>/dev/null)"; then
+  if [[ -z "$actual" ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: no-argument host call returns empty binding"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: no-argument host call returned '$actual', expected empty binding"
+  fi
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: no-argument host call exited non-zero (must always exit 0)"
+fi
 
 echo ""
 # --- Gitea: 3 URL forms (substring match) ---

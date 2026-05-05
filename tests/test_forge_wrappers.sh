@@ -19,8 +19,8 @@
 #   - lib/forge.sh exports forge_auth_status and
 #     forge_label_create <label> <color> <owner/repo>.
 #   - Both case-dispatch on $FORGE_PROVIDER. The gh branch is implemented
-#     today; tea is implemented by issue #61; fj still dies "not yet
-#     implemented" (pointing at follow-up issue #62).
+#     today; tea is implemented by issue #61; fj is implemented by issue #62
+#     with explicit FORGE_HOST binding.
 #   - forge_auth_status dies on gh auth-status failure (exact message
 #     preserved for README troubleshooting table: "gh is not authenticated.
 #     Run 'gh auth login'.").
@@ -100,7 +100,7 @@ echo ""
 [[ -f "$SCRIPT_DIR/lib/core.sh" ]]  || { echo "FAIL: lib/core.sh missing"; exit 1; }
 [[ -f "$SCRIPT_DIR/repolens.sh" ]]  || { echo "FAIL: repolens.sh missing"; exit 1; }
 
-# Fake `gh` and `tea` stubs. They read REPOLENS_FAKE_*_RC to decide exit
+# Fake forge stubs. They read REPOLENS_FAKE_*_RC to decide exit
 # code (default 0) and append argv to the configured log file so tests can
 # assert on the exact CLI surface.
 FAKE_BIN="$TMPDIR/bin"
@@ -127,6 +127,16 @@ exit "${REPOLENS_FAKE_TEA_RC:-0}"
 SH
 chmod +x "$FAKE_BIN/tea"
 
+cat > "$FAKE_BIN/fj" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${REPOLENS_FAKE_FJ_LOG:-/dev/null}"
+if [[ -n "${REPOLENS_FAKE_FJ_STDERR+x}" ]]; then
+  printf '%s\n' "$REPOLENS_FAKE_FJ_STDERR" >&2
+fi
+exit "${REPOLENS_FAKE_FJ_RC:-0}"
+SH
+chmod +x "$FAKE_BIN/fj"
+
 # Subshell helper: sources libs under a PATH that contains only the fake
 # forge stubs, sets FORGE_PROVIDER, invokes the wrapper, captures merged
 # stdout+stderr. The caller asserts on rc via $?.
@@ -143,6 +153,7 @@ run_wrapper() {
     export FORGE_PROVIDER="$provider"
     [[ -n "${FORGE_PROJECT_PATH+x}" ]] && export FORGE_PROJECT_PATH
     [[ -n "${FORGE_REMOTE_NAME+x}" ]] && export FORGE_REMOTE_NAME
+    [[ -n "${FORGE_HOST+x}" ]] && export FORGE_HOST
     # Forward per-case stub dials into the fake CLI process env. The
     # callers set REPOLENS_FAKE_* vars as shell vars via prefix
     # assignment, which are visible in this subshell but not exported —
@@ -152,6 +163,9 @@ run_wrapper() {
     [[ -n "${REPOLENS_FAKE_TEA_RC+x}" ]] && export REPOLENS_FAKE_TEA_RC
     [[ -n "${REPOLENS_FAKE_TEA_LOG+x}" ]] && export REPOLENS_FAKE_TEA_LOG
     [[ -n "${REPOLENS_FAKE_TEA_STDERR+x}" ]] && export REPOLENS_FAKE_TEA_STDERR
+    [[ -n "${REPOLENS_FAKE_FJ_RC+x}" ]] && export REPOLENS_FAKE_FJ_RC
+    [[ -n "${REPOLENS_FAKE_FJ_LOG+x}" ]] && export REPOLENS_FAKE_FJ_LOG
+    [[ -n "${REPOLENS_FAKE_FJ_STDERR+x}" ]] && export REPOLENS_FAKE_FJ_STDERR
     set -uo pipefail
     # shellcheck source=/dev/null
     source "$SCRIPT_DIR/lib/core.sh"
@@ -202,15 +216,18 @@ assert_rc_zero "forge_auth_status tea returns 0 when tea login list succeeds" "$
 assert_eq "forge_auth_status tea prints nothing on success" "" "$out"
 assert_eq "tea stub received login list" "login list" "$logged"
 
-# Test 4: fj branch not yet implemented → dies, mentions #62.
+# Test 4: fj branch implemented in #62 → calls `fj -H <host> whoami`.
 echo ""
-echo "Test 4: forge_auth_status fj → dies with 'not yet implemented' + #62"
-out="$(run_wrapper fj forge_auth_status)"
+echo "Test 4: forge_auth_status fj (stub rc=0) → rc=0, silent, calls whoami"
+FJ_LOG="$TMPDIR/fj_test4.log"
+: > "$FJ_LOG"
+FORGE_HOST=codeberg.org REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_LOG" \
+  out="$(run_wrapper fj forge_auth_status)"
 rc=$?
-assert_rc_nonzero "forge_auth_status fj exits non-zero" "$rc"
-assert_contains "die message mentions 'not yet implemented'" \
-  "not yet implemented" "$out"
-assert_contains "die message references follow-up issue #62" "#62" "$out"
+logged="$(cat "$FJ_LOG")"
+assert_rc_zero "forge_auth_status fj returns 0 when fj whoami succeeds" "$rc"
+assert_eq "forge_auth_status fj prints nothing on success" "" "$out"
+assert_eq "fj stub received host-scoped whoami" "-H codeberg.org whoami" "$logged"
 
 # Test 5: empty FORGE_PROVIDER → default case dies with a clear message.
 # Guards against a caller sourcing the module before the provider is set.
@@ -268,15 +285,19 @@ assert_eq "forge_label_create tea prints nothing on success" "" "$out"
 assert_eq "tea stub received the expected label command" \
   "labels create --name my-label --color abcdef --repo $FORGE_TEST_PROJECT --remote origin" "$logged"
 
-# Test 9: fj branch not yet implemented → dies, mentions #62.
+# Test 9: fj branch implemented in #62 → creates labels through fj.
 echo ""
-echo "Test 9: forge_label_create fj → dies with 'not yet implemented' + #62"
-out="$(run_wrapper fj forge_label_create my-label abcdef owner/repo)"
+echo "Test 9: forge_label_create fj — stub logs 'repo labels <owner/repo> create <label> <color>'"
+FJ_LOG="$TMPDIR/fj_test9.log"
+: > "$FJ_LOG"
+FORGE_HOST=codeberg.org REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_LOG" \
+  out="$(run_wrapper fj forge_label_create my-label abcdef owner/repo)"
 rc=$?
-assert_rc_nonzero "forge_label_create fj exits non-zero" "$rc"
-assert_contains "die message mentions 'not yet implemented'" \
-  "not yet implemented" "$out"
-assert_contains "die message references follow-up issue #62" "#62" "$out"
+logged="$(cat "$FJ_LOG")"
+assert_rc_zero "forge_label_create fj happy path rc=0" "$rc"
+assert_eq "forge_label_create fj prints nothing on success" "" "$out"
+assert_eq "fj stub received the expected label command" \
+  "-H codeberg.org repo labels owner/repo create my-label abcdef" "$logged"
 
 # Test 10: argument guard — missing any of the three required args
 # must die, not silently pass garbage to gh.

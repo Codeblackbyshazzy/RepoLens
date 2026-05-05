@@ -22,10 +22,11 @@
 #   - gh/jq failures print nothing to stdout and return non-zero so callers do
 #     not collapse "unknown" into "0".
 #   - tea is implemented by issue #61 with the same count/failure contract;
-#     fj remains intentionally not implemented and dies with a reference to #62.
+#     fj is implemented by issue #62 through host-scoped `fj issue search`
+#     output parsing.
 #   - No direct `gh issue list` command remains in lib/streak.sh.
 #
-# Forge calls are PATH-shadowed with fake gh/tea stubs. No real forge call is
+# Forge calls are PATH-shadowed with fake stubs. No real forge call is
 # made, and no agent command is invoked.
 
 set -uo pipefail
@@ -138,6 +139,19 @@ exit "${REPOLENS_FAKE_TEA_RC:-0}"
 SH
 chmod +x "$FAKE_BIN/tea"
 
+cat > "$FAKE_BIN/fj" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${REPOLENS_FAKE_FJ_LOG:-/dev/null}"
+if [[ -n "${REPOLENS_FAKE_FJ_STDERR+x}" ]]; then
+  printf '%s\n' "$REPOLENS_FAKE_FJ_STDERR" >&2
+fi
+if [[ -n "${REPOLENS_FAKE_FJ_STDOUT+x}" ]]; then
+  printf '%s\n' "$REPOLENS_FAKE_FJ_STDOUT"
+fi
+exit "${REPOLENS_FAKE_FJ_RC:-0}"
+SH
+chmod +x "$FAKE_BIN/fj"
+
 run_wrapper() {
   local provider="$1"; shift
   local fn="$1"; shift
@@ -147,6 +161,7 @@ run_wrapper() {
     [[ -n "${FORGE_PROJECT_PATH+x}" ]] && export FORGE_PROJECT_PATH
     [[ -n "${FORGE_REMOTE_NAME+x}" ]] && export FORGE_REMOTE_NAME
     [[ -n "${FORGE_TEA_LOGIN+x}" ]] && export FORGE_TEA_LOGIN
+    [[ -n "${FORGE_HOST+x}" ]] && export FORGE_HOST
     [[ -n "${REPOLENS_FAKE_GH_RC+x}" ]] && export REPOLENS_FAKE_GH_RC
     [[ -n "${REPOLENS_FAKE_GH_LOG+x}" ]] && export REPOLENS_FAKE_GH_LOG
     [[ -n "${REPOLENS_FAKE_GH_STDOUT+x}" ]] && export REPOLENS_FAKE_GH_STDOUT
@@ -155,6 +170,10 @@ run_wrapper() {
     [[ -n "${REPOLENS_FAKE_TEA_LOG+x}" ]] && export REPOLENS_FAKE_TEA_LOG
     [[ -n "${REPOLENS_FAKE_TEA_STDOUT+x}" ]] && export REPOLENS_FAKE_TEA_STDOUT
     [[ -n "${REPOLENS_FAKE_TEA_STDERR+x}" ]] && export REPOLENS_FAKE_TEA_STDERR
+    [[ -n "${REPOLENS_FAKE_FJ_RC+x}" ]] && export REPOLENS_FAKE_FJ_RC
+    [[ -n "${REPOLENS_FAKE_FJ_LOG+x}" ]] && export REPOLENS_FAKE_FJ_LOG
+    [[ -n "${REPOLENS_FAKE_FJ_STDOUT+x}" ]] && export REPOLENS_FAKE_FJ_STDOUT
+    [[ -n "${REPOLENS_FAKE_FJ_STDERR+x}" ]] && export REPOLENS_FAKE_FJ_STDERR
     set -uo pipefail
     # shellcheck source=/dev/null
     source "$SCRIPT_DIR/lib/core.sh"
@@ -172,6 +191,11 @@ reset_fake_gh() {
 reset_fake_tea() {
   unset REPOLENS_FAKE_TEA_RC REPOLENS_FAKE_TEA_LOG
   unset REPOLENS_FAKE_TEA_STDOUT REPOLENS_FAKE_TEA_STDERR
+}
+
+reset_fake_fj() {
+  unset REPOLENS_FAKE_FJ_RC REPOLENS_FAKE_FJ_LOG
+  unset REPOLENS_FAKE_FJ_STDOUT REPOLENS_FAKE_FJ_STDERR
 }
 
 # ---------------------------------------------------------------------------
@@ -351,13 +375,22 @@ assert_eq "tea branch passes supported issue-list flags in order" \
   "issues list --repo $FORGE_TEST_PROJECT --remote origin --labels audit:demo --state open --limit 1000 --output json" "$logged"
 
 echo ""
-echo "Test 9: fj backend dies with not-yet-implemented message and #62"
+echo "Test 9: fj backend counts open issues with the expected issue-search argv"
 reset_fake_gh
-out="$(run_wrapper fj forge_issue_list_count owner/repo audit:demo 2>&1)"
+reset_fake_fj
+fj_log="$TMPDIR/t9-fj.log"
+: > "$fj_log"
+FORGE_HOST=codeberg.org
+REPOLENS_FAKE_FJ_RC=0
+REPOLENS_FAKE_FJ_STDOUT='2 issues'
+REPOLENS_FAKE_FJ_LOG="$fj_log"
+out="$(run_wrapper fj forge_issue_list_count owner/repo audit:demo 2>/dev/null)"
 rc=$?
-assert_rc_nonzero "fj branch exits non-zero" "$rc"
-assert_contains "fj branch says not yet implemented" "not yet implemented" "$out"
-assert_contains "fj branch references issue #62" "#62" "$out"
+logged="$(cat "$fj_log")"
+assert_rc_zero "fj branch exits zero on successful issue-search count" "$rc"
+assert_eq "fj branch prints parsed count" "2" "$out"
+assert_eq "fj branch passes supported issue-search flags in order" \
+  "-H codeberg.org --style minimal issue search --repo owner/repo --labels audit:demo --state open" "$logged"
 
 echo ""
 echo "Test 10: empty FORGE_PROVIDER dies through the default arm"

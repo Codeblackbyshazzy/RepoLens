@@ -253,6 +253,7 @@ DRY_RUN=false
 LOCAL_MODE=false
 OUTPUT_DIR=""
 FORGE_PROVIDER=""
+FORGE_HOST=""
 FORGE_PROJECT_PATH=""
 FORGE_REMOTE_NAME="origin"
 
@@ -503,6 +504,9 @@ case "$AGENT" in
   opencode|opencode/*) require_cmd opencode ;;
 esac
 
+_origin_url="$(git -C "$PROJECT_PATH" remote get-url origin 2>/dev/null || true)"
+FORGE_HOST="$(detect_forge_host "$_origin_url")"
+
 # --- Resolve and validate forge provider ---
 if [[ -n "$FORGE_PROVIDER" ]]; then
   case "$FORGE_PROVIDER" in
@@ -510,14 +514,16 @@ if [[ -n "$FORGE_PROVIDER" ]]; then
     *) die "Invalid --forge: $FORGE_PROVIDER (expected gh, tea, or fj)" ;;
   esac
 else
-  _origin_url="$(git -C "$PROJECT_PATH" remote get-url origin 2>/dev/null || true)"
   FORGE_PROVIDER="$(detect_forge_provider "$_origin_url")"
-  unset _origin_url
 fi
+unset _origin_url
 
 if ! $LOCAL_MODE; then
   if [[ "$FORGE_PROVIDER" == "unknown" ]]; then
     die "Could not detect forge provider from origin remote. Pass --forge <gh|tea|fj> explicitly (required for self-hosted Gitea/Forgejo instances)."
+  fi
+  if [[ "$FORGE_PROVIDER" == "fj" && -z "${FORGE_HOST:-}" ]]; then
+    die "Forgejo fj backend requires an HTTPS or SSH origin remote so RepoLens can pass fj --host; insecure HTTP origins are not supported."
   fi
   require_forge_cli "$FORGE_PROVIDER"
 fi
@@ -894,9 +900,9 @@ confirm_autonomous_mode
 confirm_deploy_authorization
 confirm_run
 
-# --- Ensure GitHub labels ---
+# --- Ensure forge labels ---
 ensure_labels() {
-  log_info "Ensuring GitHub labels exist..."
+  log_info "Ensuring forge labels exist..."
   local label_prefix
   case "$MODE" in
     audit)    label_prefix="audit" ;;
@@ -1047,7 +1053,7 @@ run_lens() {
       issues_baseline="$_baseline_out"
     else
       issues_baseline=0
-      log_warn "[$domain/$lens_id] Could not establish issue baseline from GitHub; assuming 0. Per-lens counts may be inflated if pre-existing issues carry label '$lens_label'."
+      log_warn "[$domain/$lens_id] Could not establish issue baseline from the forge; assuming 0. Per-lens counts may be inflated if pre-existing issues carry label '$lens_label'."
     fi
   fi
 
@@ -1120,7 +1126,7 @@ run_lens() {
       [[ "$iter_issues" -gt 0 ]] && log_info "[$domain/$lens_id] $iter_issues issue(s) created this iteration ($lens_issues lens total)"
       prev_lens_issues="$lens_issues"
     else
-      log_warn "[$domain/$lens_id] Iteration $iteration: unable to query GitHub issue count; reusing previous count ($prev_lens_issues). Delta for this iteration is unknown."
+      log_warn "[$domain/$lens_id] Iteration $iteration: unable to query forge issue count; reusing previous count ($prev_lens_issues). Delta for this iteration is unknown."
       lens_issues="$prev_lens_issues"
     fi
 

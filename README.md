@@ -20,7 +20,7 @@
 | `git` | Yes | Repo validation, cloning | OS package manager (`apt install git`, `brew install git`, `nix-env -i git`) |
 | `jq` | Yes | JSON config parsing | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`) |
 | `timeout` (coreutils) | Yes | Per-invocation agent timeout watchdog (see `REPOLENS_AGENT_TIMEOUT` below) | Ships in GNU coreutils. Pre-installed on Linux/NixOS. On macOS: `brew install coreutils`. |
-| `gh` or `tea` | Yes (unless `--local`) | Remote forge operations for labels and issue queries | GitHub: [cli.github.com](https://cli.github.com) and `gh auth login`. Gitea: [gitea.com/gitea/tea](https://gitea.com/gitea/tea) and `tea login add` |
+| `gh`, `tea`, or `fj` | Yes (unless `--local`) | Remote forge operations for labels and issue queries | GitHub: [cli.github.com](https://cli.github.com) and `gh auth login`. Gitea: [gitea.com/gitea/tea](https://gitea.com/gitea/tea) and `tea login add`. Forgejo/Codeberg: [forgejo-contrib/forgejo-cli](https://codeberg.org/forgejo-contrib/forgejo-cli) and `fj -H <host> auth login` |
 | Agent CLI | Yes (at least one) | Run analysis agents | See [Supported Agent CLIs](#supported-agent-clis) below for install + auth per CLI |
 | `docker` + `docker compose` | Only for `--hosted` | DAST scanning environment | OS package manager |
 
@@ -98,8 +98,9 @@ cd RepoLens
 chmod +x repolens.sh
 
 # 3. Authenticate your forge CLI (if not already done; not needed for --local)
-gh auth login        # GitHub
-tea login add        # Gitea
+gh auth login                  # GitHub
+tea login add                  # Gitea
+fj -H codeberg.org auth login  # Codeberg; use your Forgejo host for self-hosted instances
 
 # 4. Run your first audit — single lens, fast feedback
 ./repolens.sh --project ~/my-app --agent claude --focus injection
@@ -133,9 +134,9 @@ You are responsible for every dollar of API spend. Know your per-token pricing.
 ### Rate Limits & Automated Traffic
 
 > [!NOTE]
-> RepoLens generates a lot of automated traffic. A 280-lens run can create dozens to hundreds of remote issues, plus repo reads via `gh` or `tea`, plus parallel AI provider calls.
+> RepoLens generates a lot of automated traffic. A 280-lens run can create dozens to hundreds of remote issues, plus repo reads via `gh`, `tea`, or `fj`, plus parallel AI provider calls.
 
-- **GitHub API / Gitea API.** Authenticated `gh` calls count against GitHub API quotas; authenticated `tea` calls count against your Gitea account/API quotas. Large runs can trip rate limits. Use `--max-issues <n>` to cap output, or `--local` to skip remote forge calls entirely.
+- **GitHub API / Gitea API / Forgejo API.** Authenticated `gh` calls count against GitHub API quotas; authenticated `tea` and `fj` calls count against your Gitea or Forgejo account/API quotas. Large runs can trip rate limits. Use `--max-issues <n>` to cap output, or `--local` to skip remote forge calls entirely.
 - **AI provider rate limits.** Every iteration consumes Anthropic / OpenAI tokens. Free and low-tier accounts will hit their RPM (requests-per-minute) and TPM (tokens-per-minute) ceilings immediately under `--parallel`. Verify your account is on a tier sized for concurrent agent traffic before scaling.
 - **Terms of Service & abuse risk.** Do **not** point RepoLens at repositories you do not own or have explicit permission to audit. Automated bulk issue creation against third-party repos can be treated as spam by your forge provider and may get your account flagged or suspended.
 
@@ -263,7 +264,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--max-issues <n>` | Stop after creating *n* total issues |
 | `--local` | Write findings as local markdown files instead of creating remote issues. No forge CLI required |
 | `--output <path>` | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/issues/`) |
-| `--forge <provider>` | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea. Use this for self-hosted Gitea remotes whose hostname is not auto-detected |
+| `--forge <provider>` | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea, `fj` for Forgejo/Codeberg. Codeberg is auto-detected; use this for self-hosted Gitea/Forgejo remotes whose hostname is not auto-detected. Self-hosted Forgejo needs an HTTPS or SSH `origin` remote so RepoLens can pass `fj --host` |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
 | `--max-cost <amount>` | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly. |
 | `--dry-run` | Validate config and show which lenses would run, then exit (no agents executed) |
@@ -443,7 +444,7 @@ When using `--agent claude`, RepoLens displays an explanation of the flag and as
 
 ## Troubleshooting
 
-Most first-run failures fall into one of these patterns. Errors are quoted verbatim from the script.
+Most first-run failures fall into one of these patterns. Errors are quoted verbatim from the script except placeholders such as `<host>`, which stand in for values RepoLens prints at runtime.
 
 | Error / Symptom | Cause | Fix |
 |-----------------|-------|-----|
@@ -453,6 +454,9 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | `gh is not authenticated. Run 'gh auth login'.` | `gh` not authenticated, or token expired | `gh auth login` (or `gh auth refresh` if your token is stale) |
 | `Missing required command: tea` | Gitea CLI not installed for a Gitea target | Install from [gitea.com/gitea/tea](https://gitea.com/gitea/tea), or pass `--local` to skip remote issue output |
 | `tea is not authenticated. Run 'tea login add'.` | `tea` has no configured login for your Gitea account | `tea login add` |
+| `fj not found — install from https://codeberg.org/forgejo-contrib/forgejo-cli` | Forgejo CLI not installed for a Forgejo or Codeberg target | Install from [forgejo-contrib/forgejo-cli](https://codeberg.org/forgejo-contrib/forgejo-cli), or pass `--local` to skip remote issue output |
+| `fj is not authenticated. Run 'fj -H <host> auth login' or 'fj -H <host> auth add-key <user>'.` | `fj` has no configured login for the detected Codeberg or Forgejo host | Run the command shown in the error, for example `fj -H codeberg.org auth login` |
+| `Forgejo fj backend requires an HTTPS or SSH origin remote so RepoLens can pass fj --host; insecure HTTP origins are not supported.` | `--forge fj` was selected, but the target repo has no secure `origin` remote to derive the Forgejo host from | Add an HTTPS or SSH `origin` remote such as `https://forge.example.com/owner/repo.git`, or use `--local` |
 | `Missing required command: claude` (or `codex` / `opencode`) | Agent CLI not installed | See [Supported Agent CLIs](#supported-agent-clis) for install + auth |
 | Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |
 | `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `opencode`, `opencode/<model>` |

@@ -169,6 +169,7 @@ run_require_forge_cli() {
   local path_val="$1"
   shift
   (
+    # shellcheck disable=SC2030
     export PATH="$path_val"
     set -uo pipefail
     # shellcheck source=/dev/null
@@ -206,6 +207,8 @@ rc=$?
 assert_rc_nonzero "require_forge_cli fj exits non-zero when fj missing" "$rc"
 assert_contains "die message mentions 'fj not found'" "fj not found" "$out"
 assert_contains "die message includes an install hint" "install" "$out"
+assert_contains "die message includes the current Forgejo CLI repository" \
+  "https://codeberg.org/forgejo-contrib/forgejo-cli" "$out"
 
 # Test 4: require_forge_cli with an invalid provider name dies. Guards
 # against caller typos — a silent pass would mask bugs in the wiring code.
@@ -265,6 +268,15 @@ git -C "$PROJECT" remote add origin https://gitlab.com/owner/repo.git 2>/dev/nul
 
 # PATH override: fake gh + claude take precedence. Real git, jq, timeout,
 # bash, etc. still resolve through the system PATH.
+cat > "$FAKE_BIN/fj" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${REPOLENS_FAKE_FJ_LOG:-/dev/null}"
+exit "${REPOLENS_FAKE_FJ_RC:-0}"
+SH
+
+chmod +x "$FAKE_BIN/fj"
+
+# shellcheck disable=SC2031
 export PATH="$FAKE_BIN:$PATH"
 
 # Test 5: repolens.sh source contains the --forge flag (usage text + parser).
@@ -304,6 +316,44 @@ out6="$(cat "$OUT_FILE")"
 assert_rc_zero "--forge tea --local --dry-run exits 0" "$rc"
 assert_not_contains "--forge is not rejected as unknown argument" "Unknown argument: --forge" "$out6"
 assert_not_contains "presence check skipped under --local (no 'tea not found')" "tea not found" "$out6"
+
+echo ""
+echo "Test 6b: --forge fj --local without origin skips host validation and fj"
+PROJECT_FJ_LOCAL="$TMPDIR/project_fj_local"
+mkdir -p "$PROJECT_FJ_LOCAL"
+(
+  cd "$PROJECT_FJ_LOCAL"
+  git init -q 2>/dev/null
+  git config user.email test@example.com
+  git config user.name Test
+  echo "# test" > README.md
+  git add README.md
+  git commit -q -m init 2>/dev/null
+) || true
+
+FJ_LOCAL_LOG="$TMPDIR/run6b-fj.log"
+: > "$FJ_LOCAL_LOG"
+OUT_FILE="$TMPDIR/run6b.log"
+set +e
+REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_LOCAL_LOG" \
+bash "$SCRIPT_DIR/repolens.sh" \
+  --project "$PROJECT_FJ_LOCAL" \
+  --agent claude \
+  --domain i18n \
+  --forge fj \
+  --local \
+  --dry-run \
+  --yes \
+  >"$OUT_FILE" 2>&1
+rc=$?
+set -e
+record_run_id "$OUT_FILE"
+out6b="$(cat "$OUT_FILE")"
+fj6b="$(cat "$FJ_LOCAL_LOG")"
+assert_rc_zero "--forge fj --local without origin exits 0" "$rc"
+assert_not_contains "local fj run does not require origin-derived host" "requires an HTTPS or SSH origin remote" "$out6b"
+assert_not_contains "local fj run skips fj presence/auth checks" "fj is not authenticated" "$out6b"
+assert_eq "fj is not invoked under --local" "" "$fj6b"
 
 # Test 7: gitlab origin + NO --forge + NO --local → die with instructional
 # message telling the user to pass --forge. Exercises the
@@ -434,6 +484,160 @@ out11="$(cat "$OUT_FILE")"
 assert_rc_zero "github.com origin auto-detects gh, exits 0" "$rc"
 assert_not_contains "no 'Could not detect forge provider' on github origin" "Could not detect forge provider" "$out11"
 assert_not_contains "no 'Pass --forge' die on github origin" "Pass --forge" "$out11"
+
+echo ""
+echo "Test 12: --forge fj with a self-hosted origin passes parsed host to fj"
+PROJECT_FJ="$TMPDIR/project_fj"
+mkdir -p "$PROJECT_FJ"
+(
+  cd "$PROJECT_FJ"
+  git init -q 2>/dev/null
+  git config user.email test@example.com
+  git config user.name Test
+  echo "# test" > README.md
+  git add README.md
+  git commit -q -m init 2>/dev/null
+) || true
+git -C "$PROJECT_FJ" remote add origin https://forge.example.com:3000/owner/repo.git 2>/dev/null || true
+
+FJ_LOG="$TMPDIR/run12-fj.log"
+: > "$FJ_LOG"
+OUT_FILE="$TMPDIR/run12.log"
+set +e
+REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_LOG" \
+bash "$SCRIPT_DIR/repolens.sh" \
+  --project "$PROJECT_FJ" \
+  --agent claude \
+  --domain i18n \
+  --forge fj \
+  --dry-run \
+  --yes \
+  >"$OUT_FILE" 2>&1
+rc=$?
+set -e
+record_run_id "$OUT_FILE"
+out12="$(cat "$OUT_FILE")"
+fj12="$(cat "$FJ_LOG")"
+assert_rc_zero "--forge fj self-hosted origin reaches --dry-run" "$rc"
+assert_not_contains "fj backend is no longer a not-yet-implemented branch" "not yet implemented" "$out12"
+assert_not_contains "FORGE_HOST was parsed before fj auth" "FORGE_HOST" "$out12"
+assert_eq "fj auth receives the parsed self-hosted host" \
+  "-H https://forge.example.com:3000 whoami" "$fj12"
+
+echo ""
+echo "Test 13: codeberg.org origin without --forge auto-detects fj and passes host"
+PROJECT_CODEBERG="$TMPDIR/project_codeberg"
+mkdir -p "$PROJECT_CODEBERG"
+(
+  cd "$PROJECT_CODEBERG"
+  git init -q 2>/dev/null
+  git config user.email test@example.com
+  git config user.name Test
+  echo "# test" > README.md
+  git add README.md
+  git commit -q -m init 2>/dev/null
+) || true
+git -C "$PROJECT_CODEBERG" remote add origin https://codeberg.org/owner/repo.git 2>/dev/null || true
+
+FJ_CODEBERG_LOG="$TMPDIR/run13-fj.log"
+: > "$FJ_CODEBERG_LOG"
+OUT_FILE="$TMPDIR/run13.log"
+set +e
+REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_CODEBERG_LOG" \
+bash "$SCRIPT_DIR/repolens.sh" \
+  --project "$PROJECT_CODEBERG" \
+  --agent claude \
+  --domain i18n \
+  --dry-run \
+  --yes \
+  >"$OUT_FILE" 2>&1
+rc=$?
+set -e
+record_run_id "$OUT_FILE"
+out13="$(cat "$OUT_FILE")"
+fj13="$(cat "$FJ_CODEBERG_LOG")"
+assert_rc_zero "codeberg.org origin auto-detects fj and reaches --dry-run" "$rc"
+assert_not_contains "Codeberg auto-detect does not ask for explicit --forge" "Pass --forge" "$out13"
+assert_not_contains "Codeberg auto-detect parsed FORGE_HOST before auth" "FORGE_HOST" "$out13"
+assert_eq "fj auth receives bare codeberg.org host from auto-detection" \
+  "-H codeberg.org whoami" "$fj13"
+
+echo ""
+echo "Test 14: --forge fj with an HTTP origin dies before invoking fj"
+PROJECT_FJ_HTTP="$TMPDIR/project_fj_http"
+mkdir -p "$PROJECT_FJ_HTTP"
+(
+  cd "$PROJECT_FJ_HTTP"
+  git init -q 2>/dev/null
+  git config user.email test@example.com
+  git config user.name Test
+  echo "# test" > README.md
+  git add README.md
+  git commit -q -m init 2>/dev/null
+) || true
+git -C "$PROJECT_FJ_HTTP" remote add origin http://forge.example.com/owner/repo.git 2>/dev/null || true
+
+FJ_HTTP_LOG="$TMPDIR/run14-fj.log"
+: > "$FJ_HTTP_LOG"
+OUT_FILE="$TMPDIR/run14.log"
+set +e
+REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_HTTP_LOG" \
+bash "$SCRIPT_DIR/repolens.sh" \
+  --project "$PROJECT_FJ_HTTP" \
+  --agent claude \
+  --domain i18n \
+  --forge fj \
+  --dry-run \
+  --yes \
+  >"$OUT_FILE" 2>&1
+rc=$?
+set -e
+record_run_id "$OUT_FILE"
+out14="$(cat "$OUT_FILE")"
+fj14="$(cat "$FJ_HTTP_LOG")"
+assert_rc_nonzero "--forge fj with an HTTP origin exits non-zero" "$rc"
+assert_contains "die message rejects insecure HTTP origins" \
+  "insecure HTTP origins are not supported" "$out14"
+assert_contains "die message explains the HTTPS or SSH requirement" \
+  "requires an HTTPS or SSH origin remote" "$out14"
+assert_eq "fj is not invoked for an insecure HTTP origin" "" "$fj14"
+
+echo ""
+echo "Test 15: --forge fj without an origin remote dies before invoking fj"
+PROJECT_FJ_NO_ORIGIN="$TMPDIR/project_fj_no_origin"
+mkdir -p "$PROJECT_FJ_NO_ORIGIN"
+(
+  cd "$PROJECT_FJ_NO_ORIGIN"
+  git init -q 2>/dev/null
+  git config user.email test@example.com
+  git config user.name Test
+  echo "# test" > README.md
+  git add README.md
+  git commit -q -m init 2>/dev/null
+) || true
+
+FJ_NO_ORIGIN_LOG="$TMPDIR/run15-fj.log"
+: > "$FJ_NO_ORIGIN_LOG"
+OUT_FILE="$TMPDIR/run15.log"
+set +e
+REPOLENS_FAKE_FJ_RC=0 REPOLENS_FAKE_FJ_LOG="$FJ_NO_ORIGIN_LOG" \
+bash "$SCRIPT_DIR/repolens.sh" \
+  --project "$PROJECT_FJ_NO_ORIGIN" \
+  --agent claude \
+  --domain i18n \
+  --forge fj \
+  --dry-run \
+  --yes \
+  >"$OUT_FILE" 2>&1
+rc=$?
+set -e
+record_run_id "$OUT_FILE"
+out15="$(cat "$OUT_FILE")"
+fj15="$(cat "$FJ_NO_ORIGIN_LOG")"
+assert_rc_nonzero "--forge fj without an origin remote exits non-zero" "$rc"
+assert_contains "die message explains that fj needs an HTTPS or SSH origin remote for --host" \
+  "requires an HTTPS or SSH origin remote" "$out15"
+assert_eq "fj is not invoked when FORGE_HOST cannot be resolved" "" "$fj15"
 
 # ---------------------------------------------------------------------------
 # Summary

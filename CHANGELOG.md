@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Gitea `tea` backend for remote forge operations: RepoLens can authenticate with `tea login list`, create labels with `tea labels create --name ...`, and count matching open issues with `tea issues list --limit 1000 --output json` when `--forge tea` is selected or a Gitea origin is detected
+- Forgejo/Codeberg `fj` backend for remote forge operations: RepoLens can authenticate with `fj -H <host> whoami`, create labels with `fj -H <host> repo labels ...`, and count matching open issues with `fj -H <host> issue search` when Codeberg is detected or `--forge fj` is selected for a Forgejo origin
 - `--local` flag: write findings as local markdown files instead of creating remote issues — no forge CLI required
 - `--output <path>` flag: custom output directory for local markdown files (requires `--local`, defaults to `logs/<run-id>/issues/`)
 
