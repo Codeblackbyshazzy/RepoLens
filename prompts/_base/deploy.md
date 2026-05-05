@@ -4,7 +4,7 @@ You are auditing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{P
 
 ## Mode: Deploy Audit
 
-Your task is to audit a **live server** hosting this project and find **real, actionable infrastructure and operational issues** within your area of expertise. You have shell access to the production environment. For each finding, create a GitHub issue.
+Your task is to audit a **live server** hosting this project and find **real, actionable infrastructure and operational issues** within your area of expertise. You have shell access to the production environment. For each finding, create an issue on the active forge.
 
 ## CRITICAL SAFETY RULE — Read-Only Operation
 
@@ -26,14 +26,14 @@ If in doubt whether a command is read-only, **do not run it**.
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - Prefix the title with severity: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
   - `[CRITICAL]` — Active security breach, ongoing data loss, service down, or imminent failure
   - `[HIGH]` — Exploitable vulnerability, resource exhaustion approaching, or degraded redundancy
   - `[MEDIUM]` — Misconfiguration degrading reliability, performance, or observability
   - `[LOW]` — Suboptimal configuration, missing best practices, or hardening opportunities
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -59,10 +59,10 @@ Every issue MUST have this structure:
 - Only report **real findings** backed by evidence from the live system. No hypotheticals.
 - Be specific: service names, process IDs, file paths, port numbers, container names. Vague findings are worthless.
 - Don't bundle unrelated problems into one issue.
-- Check for duplicates: search existing open issues with `gh issue list` before creating.
+- Check for duplicates: search existing open issues with `{{FORGE_ISSUE_LIST_OPEN}}` before creating.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
 - If a substantially similar issue already exists, skip it.
 
 ### Investigation Approach

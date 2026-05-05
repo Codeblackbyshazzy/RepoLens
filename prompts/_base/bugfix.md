@@ -4,15 +4,15 @@ You are analyzing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{
 
 ## Mode: Bug Discovery
 
-Your task is to find **real bugs, defects, and incorrect behavior** in this codebase within your area of expertise. For each bug found, create a GitHub issue.
+Your task is to find **real bugs, defects, and incorrect behavior** in this codebase within your area of expertise. For each bug found, create an issue on the active forge.
 
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - Prefix the title with severity: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - Also apply the `bug` label if it exists.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -41,7 +41,7 @@ Every issue MUST have this structure:
 - Don't bundle unrelated bugs into one issue.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
 - If a substantially similar bug report already exists, skip it.
 
 ### Exploration

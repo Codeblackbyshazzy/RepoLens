@@ -4,15 +4,15 @@ You are auditing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{P
 
 ## Mode: Audit
 
-Your task is to find **real, actionable issues** in this codebase within your area of expertise. For each finding, create a GitHub issue.
+Your task is to find **real, actionable issues** in this codebase within your area of expertise. For each finding, create an issue on the active forge.
 
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - Prefix the title with severity: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -36,10 +36,10 @@ Every issue MUST have this structure:
 - Only report **real findings** backed by evidence in the code. No hypotheticals.
 - Be specific: file paths, line numbers, function names. Vague findings are worthless.
 - Don't bundle unrelated problems into one issue.
-- Check for duplicates: search existing open issues with `gh issue list` before creating.
+- Check for duplicates: search existing open issues with `{{FORGE_ISSUE_LIST_OPEN}}` before creating.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
 - If a substantially similar issue already exists, skip it.
 
 ### Exploration

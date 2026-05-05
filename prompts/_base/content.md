@@ -4,7 +4,7 @@ You are analyzing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{
 
 ## Mode: Content Audit & Creation
 
-Your task is to audit the quality of existing content in this project and, when source material is provided, create GitHub issues for new content derived from that source.
+Your task is to audit the quality of existing content in this project and, when source material is provided, create issues on the active forge for new content derived from that source.
 
 ## Phase 1: Content Landscape Discovery
 
@@ -23,7 +23,7 @@ Using the content landscape you discovered, apply your lens-specific audit crite
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - For **audit findings** (problems with existing content), prefix with severity: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
   - `[CRITICAL]` — Content is factually wrong, dangerously misleading, or entirely missing where essential
@@ -35,7 +35,7 @@ Using the content landscape you discovered, apply your lens-specific audit crite
   - `[P1]` — Important content that significantly expands coverage
   - `[P2]` — Valuable supplementary content
   - `[P3]` — Nice-to-have, enrichment content
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -66,11 +66,11 @@ Every issue MUST be scoped so that a human can complete it in approximately 1 ho
 - Only report **real findings** backed by evidence. No hypotheticals.
 - Be specific: file paths, line numbers, exact content excerpts.
 - Don't bundle unrelated problems into one issue.
-- Check for duplicates: search existing open issues with `gh issue list` before creating.
+- Check for duplicates: search existing open issues with `{{FORGE_ISSUE_LIST_OPEN}}` before creating.
 - When creating content from source material, match the project's existing content patterns and formats.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
 - If a substantially similar issue already exists, skip it.
 
 ### Exploration

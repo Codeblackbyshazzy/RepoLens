@@ -48,10 +48,14 @@ read_spec_file() {
 #   2. Reads the lens body
 #   3. Substitutes {{LENS_BODY}} in base template with lens body
 #   4. Substitutes all other {{VARIABLE}} placeholders using an associative array
-#   5. Builds and substitutes {{MAX_ISSUES_SECTION}}
-#   6. Builds and substitutes {{LOCAL_MODE_SECTION}} (local markdown export override)
-#   7. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
-#   8. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
+#   5. Substitutes forge command placeholders when pre-rendered values are provided:
+#      {{FORGE_ISSUE_CREATE}}, {{FORGE_LABEL_CREATE}},
+#      {{FORGE_ENHANCEMENT_LABEL_CREATE}}, {{FORGE_ISSUE_LIST_OPEN}},
+#      {{FORGE_ISSUE_LIST_CLOSED}}
+#   6. Builds and substitutes {{MAX_ISSUES_SECTION}}
+#   7. Builds and substitutes {{LOCAL_MODE_SECTION}} (local markdown export override)
+#   8. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
+#   9. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
 #   Variables string format: "KEY1=VALUE1|KEY2=VALUE2|..."
 compose_prompt() {
   local base_file="$1" lens_file="$2" vars_string="$3"
@@ -59,6 +63,7 @@ compose_prompt() {
   local hosted="${8:-false}"
   local local_mode="${9:-false}" local_output_dir="${10:-}"
   local base_content lens_body spec_section prompt key value
+  local -A prompt_vars=()
 
   base_content="$(cat "$base_file")"
   lens_body="$(read_body "$lens_file")"
@@ -69,10 +74,29 @@ compose_prompt() {
   # Step 2: Substitute variables from pipe-delimited string
   IFS='|' read -ra pairs <<< "$vars_string"
   for pair in "${pairs[@]}"; do
+    [[ -n "$pair" ]] || continue
     key="${pair%%=*}"
     value="${pair#*=}"
+    prompt_vars["$key"]="$value"
     prompt="${prompt//\{\{$key\}\}/$value}"
   done
+
+  # Step 2b: Clear any forge placeholders that were not supplied by callers.
+  # Production rendering passes pre-resolved provider commands in vars_string.
+  # Fallback text stays provider-neutral and intentionally does not rebuild a
+  # repo slug from REPO_OWNER/REPO_NAME, because REPO_NAME may be a checkout
+  # directory basename rather than the origin repository name.
+  local forge_issue_create="${prompt_vars[FORGE_ISSUE_CREATE]:-Use the active forge CLI to create the issue with title, body, repo, and labels}"
+  local forge_label_create="${prompt_vars[FORGE_LABEL_CREATE]:-Use the active forge CLI to create the lens label with the configured color}"
+  local forge_enhancement_label_create="${prompt_vars[FORGE_ENHANCEMENT_LABEL_CREATE]:-Use the active forge CLI to create label enhancement with color a2eeef}"
+  local forge_issue_list_open="${prompt_vars[FORGE_ISSUE_LIST_OPEN]:-Use the active forge CLI to list open issues}"
+  local forge_issue_list_closed="${prompt_vars[FORGE_ISSUE_LIST_CLOSED]:-Use the active forge CLI to list closed issues}"
+
+  prompt="${prompt//\{\{FORGE_ISSUE_CREATE\}\}/$forge_issue_create}"
+  prompt="${prompt//\{\{FORGE_LABEL_CREATE\}\}/$forge_label_create}"
+  prompt="${prompt//\{\{FORGE_ENHANCEMENT_LABEL_CREATE\}\}/$forge_enhancement_label_create}"
+  prompt="${prompt//\{\{FORGE_ISSUE_LIST_OPEN\}\}/$forge_issue_list_open}"
+  prompt="${prompt//\{\{FORGE_ISSUE_LIST_CLOSED\}\}/$forge_issue_list_closed}"
 
   # Step 3: Build and insert max-issues section
   local max_issues_section=""

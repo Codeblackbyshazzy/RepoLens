@@ -4,15 +4,15 @@ You are analyzing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{
 
 ## Mode: Feature Discovery
 
-Your task is to identify **missing features, capabilities, or improvements** that this codebase should have within your area of expertise. For each recommendation, create a GitHub issue.
+Your task is to identify **missing features, capabilities, or improvements** that this codebase should have within your area of expertise. For each recommendation, create an issue on the active forge.
 
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - Prefix the title with priority: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -39,8 +39,8 @@ Every issue MUST have this structure:
 - Don't bundle unrelated recommendations into one issue.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
-- Also check CLOSED issues: `gh issue list --state closed --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
+- Also check CLOSED issues: `{{FORGE_ISSUE_LIST_CLOSED}}`
 - If a substantially similar issue already exists, skip it.
 
 ### Exploration

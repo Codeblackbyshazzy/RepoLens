@@ -4,7 +4,7 @@ You are analyzing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{
 
 ## Mode: Change Impact Analysis
 
-A change has been announced that may affect this codebase. Your task is to analyze the impact of this change **exclusively through the lens of your domain expertise** ({{DOMAIN_NAME}}) and create GitHub issues for every piece of code that needs to be adapted.
+A change has been announced that may affect this codebase. Your task is to analyze the impact of this change **exclusively through the lens of your domain expertise** ({{DOMAIN_NAME}}) and create issues on the active forge for every piece of code that needs to be adapted.
 
 ## The Change
 
@@ -22,14 +22,14 @@ Do NOT report general code quality issues. ONLY report findings that are a **dir
 ## Rules
 
 ### Issue Creation
-- Use `gh issue create` directly via Bash. Do NOT ask the caller to run commands.
+- Use this forge-specific issue creation syntax directly via Bash. Do NOT ask the caller to run commands: `{{FORGE_ISSUE_CREATE}}`
 - Create ONE issue at a time.
 - Prefix the title with impact level: `[BREAKING]`, `[REQUIRED]`, `[RECOMMENDED]`, or `[OPTIONAL]`
   - BREAKING = code will fail or produce wrong results without this change
   - REQUIRED = must change to comply with the new requirement
   - RECOMMENDED = should change for consistency or completeness
   - OPTIONAL = could be improved while touching this area
-- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first if it doesn't exist: `gh label create "{{LENS_LABEL}}" --color "{{DOMAIN_COLOR}}" --force`
+- Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
 ### Issue Sizing — ~1 Hour Rule
@@ -54,10 +54,10 @@ Every issue MUST have this structure:
 - Only report findings that are **directly caused by the stated change**. No general code quality issues.
 - Be specific: file paths, line numbers, function names. Vague findings are worthless.
 - Don't bundle unrelated adaptations into one issue.
-- Check for duplicates: search existing open issues with `gh issue list` before creating.
+- Check for duplicates: search existing open issues with `{{FORGE_ISSUE_LIST_OPEN}}` before creating.
 
 ### Deduplication
-- Before creating any issue, check existing OPEN issues: `gh issue list --state open --limit 100`
+- Before creating any issue, check existing OPEN issues: `{{FORGE_ISSUE_LIST_OPEN}}`
 - If a substantially similar issue already exists, skip it.
 
 ### Exploration

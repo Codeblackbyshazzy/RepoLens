@@ -254,6 +254,7 @@ LOCAL_MODE=false
 OUTPUT_DIR=""
 FORGE_PROVIDER=""
 FORGE_HOST=""
+FORGE_REPO_SLUG=""
 FORGE_PROJECT_PATH=""
 FORGE_REMOTE_NAME="origin"
 
@@ -506,6 +507,10 @@ esac
 
 _origin_url="$(git -C "$PROJECT_PATH" remote get-url origin 2>/dev/null || true)"
 FORGE_HOST="$(detect_forge_host "$_origin_url")"
+FORGE_REPO_SLUG="$(forge_remote_repo_slug "$_origin_url")"
+if [[ -z "$FORGE_REPO_SLUG" ]]; then
+  FORGE_REPO_SLUG="$REPO_OWNER/$REPO_NAME"
+fi
 
 # --- Resolve and validate forge provider ---
 if [[ -n "$FORGE_PROVIDER" ]]; then
@@ -1017,6 +1022,12 @@ run_lens() {
   vars+="|RUN_ID=${RUN_ID}"
   vars+="|REPO_NAME=${REPO_NAME}"
   vars+="|REPO_OWNER=${REPO_OWNER}"
+  vars+="|FORGE_REPO_SLUG=${FORGE_REPO_SLUG}"
+  vars+="|FORGE_ISSUE_CREATE=$(forge_prompt_issue_create "$lens_label" "$FORGE_REPO_SLUG" "$PROJECT_PATH")"
+  vars+="|FORGE_LABEL_CREATE=$(forge_prompt_label_create "$lens_label" "$domain_color" "$FORGE_REPO_SLUG" "$PROJECT_PATH")"
+  vars+="|FORGE_ENHANCEMENT_LABEL_CREATE=$(forge_prompt_label_create "enhancement" "a2eeef" "$FORGE_REPO_SLUG" "$PROJECT_PATH")"
+  vars+="|FORGE_ISSUE_LIST_OPEN=$(forge_prompt_issue_list "open" "$FORGE_REPO_SLUG" "$PROJECT_PATH")"
+  vars+="|FORGE_ISSUE_LIST_CLOSED=$(forge_prompt_issue_list "closed" "$FORGE_REPO_SLUG" "$PROJECT_PATH")"
   [[ -n "$CHANGE_STATEMENT" ]] && vars+="|CHANGE_STATEMENT=${CHANGE_STATEMENT}"
   [[ -n "$SOURCE_FILE" ]] && vars+="|SOURCE_PATH=${SOURCE_FILE}"
   [[ -n "$HOSTED_NETWORK" ]] && vars+="|HOSTED_NETWORK=${HOSTED_NETWORK}"

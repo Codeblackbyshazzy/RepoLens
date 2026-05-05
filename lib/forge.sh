@@ -120,6 +120,42 @@ detect_forge_host() {
   return 0
 }
 
+# forge_remote_repo_slug <remote_url>
+#   Prints the owner/repo slug from a supported forge remote URL.
+#   Supported URL forms mirror detect_forge_provider:
+#     https://[user@]host[:port][/base]/owner/repo[.git]
+#     git@host:owner/repo[.git]
+#     ssh://[user@]host[:port]/owner/repo[.git]
+#   Malformed or too-short paths print an empty string and return 0.
+forge_remote_repo_slug() {
+  local url="${1:-}" path owner repo
+  path="$(_forge_remote_path "$url")"
+  path="${path#/}"
+
+  if [[ -z "$path" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  local -a parts=()
+  IFS='/' read -r -a parts <<< "$path"
+  local count="${#parts[@]}"
+  if (( count < 2 )); then
+    printf '\n'
+    return 0
+  fi
+
+  owner="${parts[$((count - 2))]}"
+  repo="${parts[$((count - 1))]}"
+  if [[ -z "$owner" || -z "$repo" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  printf '%s/%s\n' "$owner" "$repo"
+  return 0
+}
+
 _forge_remote_host() {
   local url="${1:-}"
   local host=""
@@ -140,6 +176,33 @@ _forge_remote_host() {
   fi
 
   printf '%s\n' "${host,,}"
+  return 0
+}
+
+_forge_remote_path() {
+  local url="${1:-}" path=""
+
+  if [[ -z "$url" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  # Form 1: scp-like SSH — user@host:path (no scheme, colon separates host from path).
+  if [[ "$url" =~ ^[^@/:]+@[^:/]+:(.+)$ ]]; then
+    path="${BASH_REMATCH[1]}"
+  # Form 2: URL with scheme — scheme://[user@]host[:port]/path
+  elif [[ "$url" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+/(.*)$ ]]; then
+    path="${BASH_REMATCH[1]}"
+  fi
+
+  path="${path%%\?*}"
+  path="${path%%#*}"
+  while [[ "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  path="${path%.git}"
+
+  printf '%s\n' "$path"
   return 0
 }
 
@@ -205,6 +268,109 @@ require_forge_cli() {
       die "require_forge_cli: unknown provider '$provider' (expected gh|tea|fj)"
       ;;
   esac
+}
+
+# forge_prompt_issue_create <label> <owner/repo> <project_path>
+#   Prints provider-specific issue creation syntax for rendered agent prompts.
+#   The command intentionally includes literal "$title", "$body", and
+#   "$body_file" operands so agents can substitute concrete finding values.
+forge_prompt_issue_create() {
+  local label="${1:-}" repo="${2:-}" project_path="${3:-}"
+  [[ -n "$label" ]] || label="<lens-label>"
+  [[ -n "$repo" ]] || repo="<owner/repo>"
+
+  case "${FORGE_PROVIDER:-}" in
+    gh)
+      printf 'gh issue create -R %s --title "$title" --body-file "$body_file" --label %s\n' \
+        "$repo" "$label"
+      ;;
+    tea)
+      printf 'tea issues create %s --title "$title" --description "$body" --labels %s\n' \
+        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$label"
+      ;;
+    fj)
+      local host="${FORGE_HOST:-<forge-host>}"
+      printf 'issue_output="$(fj -H %s issue create --repo %s "$title" --body "$body" --no-template)" && issue_number="${issue_output##*issues/}" && issue_number="${issue_number%%[^0-9]*}" && issue_number="${issue_number:-${issue_output##*#}}" && issue_number="${issue_number%%[^0-9]*}" && [[ -n "$issue_number" ]] && fj -H %s issue edit "%s#$issue_number" labels --add %s\n' \
+        "$host" "$repo" "$host" "$repo" "$label"
+      ;;
+    *)
+      printf 'Use the active forge CLI to create the issue with title, body, repo %s, and label %s\n' \
+        "$repo" "$label"
+      ;;
+  esac
+}
+
+# forge_prompt_label_create <label> <color> <owner/repo> <project_path>
+#   Prints provider-specific label creation syntax for rendered prompts.
+forge_prompt_label_create() {
+  local label="${1:-}" color="${2:-}" repo="${3:-}" project_path="${4:-}"
+  [[ -n "$label" ]] || label="<label>"
+  [[ -n "$color" ]] || color="ededed"
+  [[ -n "$repo" ]] || repo="<owner/repo>"
+
+  case "${FORGE_PROVIDER:-}" in
+    gh)
+      printf 'gh label create %s --color %s --force -R %s\n' "$label" "$color" "$repo"
+      ;;
+    tea)
+      printf 'tea labels create --name %s --color %s %s\n' \
+        "$label" "$color" "$(_forge_prompt_tea_target "$repo" "$project_path")"
+      ;;
+    fj)
+      local host="${FORGE_HOST:-<forge-host>}"
+      printf 'fj -H %s repo labels %s create %s %s\n' "$host" "$repo" "$label" "$color"
+      ;;
+    *)
+      printf 'Use the active forge CLI to create label %s with color %s on %s\n' \
+        "$label" "$color" "$repo"
+      ;;
+  esac
+}
+
+# forge_prompt_issue_list <state> <owner/repo> <project_path>
+#   Prints provider-specific issue listing syntax for duplicate checks.
+forge_prompt_issue_list() {
+  local state="${1:-open}" repo="${2:-}" project_path="${3:-}"
+  [[ -n "$repo" ]] || repo="<owner/repo>"
+
+  case "${FORGE_PROVIDER:-}" in
+    gh)
+      printf 'gh issue list -R %s --state %s --limit 100\n' "$repo" "$state"
+      ;;
+    tea)
+      printf 'tea issues list %s --state %s --limit 100\n' \
+        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$state"
+      ;;
+    fj)
+      local host="${FORGE_HOST:-<forge-host>}"
+      printf 'fj -H %s --style minimal issue search --repo %s --state %s\n' \
+        "$host" "$repo" "$state"
+      ;;
+    *)
+      printf 'Use the active forge CLI to list %s issues on %s\n' "$state" "$repo"
+      ;;
+  esac
+}
+
+_forge_prompt_tea_target() {
+  local repo="${1:-<owner/repo>}" project_path="${2:-}"
+  local remote="${FORGE_REMOTE_NAME:-origin}"
+
+  if [[ -n "$project_path" ]]; then
+    printf -- '--repo %s --remote %s' "$(_forge_prompt_shell_quote "$project_path")" "$remote"
+  elif [[ -n "${FORGE_PROJECT_PATH:-}" ]]; then
+    printf -- '--repo %s --remote %s' "$(_forge_prompt_shell_quote "$FORGE_PROJECT_PATH")" "$remote"
+  elif [[ -n "${FORGE_TEA_LOGIN:-}" ]]; then
+    printf -- '--repo %s --login %s' "$repo" "$FORGE_TEA_LOGIN"
+  else
+    printf -- '--repo %s --remote %s' "$repo" "$remote"
+  fi
+}
+
+_forge_prompt_shell_quote() {
+  local value="${1:-}"
+  value="$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+  printf "'%s'" "$value"
 }
 
 # forge_auth_status
