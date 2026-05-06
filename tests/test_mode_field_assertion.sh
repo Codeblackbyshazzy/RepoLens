@@ -151,13 +151,13 @@ else
 fi
 
 # =====================================================================
-# Contract 4: domains.json has exactly 4 mode-bearing domains
+# Contract 4: domains.json has exactly 5 mode-bearing domains
 # =====================================================================
 
 echo ""
-echo "Test 10: domains.json has exactly 4 mode-bearing domains"
+echo "Test 10: domains.json has exactly 5 mode-bearing domains"
 mode_count="$(jq '[.domains[] | select(.mode != null)] | length' "$DOMAINS_FILE")"
-assert_eq "4 domains have mode fields" "4" "$mode_count"
+assert_eq "5 domains have mode fields" "5" "$mode_count"
 
 echo ""
 echo "Test 11: discovery domain has mode 'discover'"

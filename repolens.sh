@@ -429,12 +429,82 @@ if [[ "$PROJECT_PATH" =~ ^(https://|git@|ssh://|git://) ]]; then
   unset _repo_basename
 fi
 
+# --- Deploy target dispatch state (issue #88) ---
+# Deploy mode dispatches between two targets:
+#   - server : live host inspection (default; uses the `deployment` domain)
+#   - android: APK audit               (uses the `android` domain)
+# TRUST BOUNDARY: classification must NEVER execute project-controlled build
+# tooling (gradlew, gradle, mvnw, etc.) directly. APK discovery is a pure
+# filesystem walk. A source-tree fallback to `build_android_apk` is wired via
+# a `declare -F` guard so it is a no-op until the sibling helper lands; that
+# helper itself (sibling issue #189) is responsible for authorization,
+# confirmation, and dry-run gating before any build is invoked.
+TARGET_TYPE="server"
+ANDROID_APK_PATH=""
+ANDROID_PACKAGE_NAME=""
+ANDROID_HAS_DEVICE="false"
+
 # --- Validate project is a git repo ---
 _orig_project="$PROJECT_PATH"
-PROJECT_PATH="$(cd "$PROJECT_PATH" 2>/dev/null && pwd)" || die "Cannot access project path: $_orig_project"
+# Deploy mode also accepts a direct path to a pre-built .apk file. Resolve
+# it, pin the Android target now, and rebase PROJECT_PATH onto the APK's
+# parent directory so downstream `cd "$PROJECT_PATH"` continues to work.
+if [[ "$MODE" == "deploy" && -f "$PROJECT_PATH" && "$PROJECT_PATH" == *.apk ]]; then
+  _apk_dir="$(cd "$(dirname "$PROJECT_PATH")" 2>/dev/null && pwd)" || die "Cannot access project path: $_orig_project"
+  ANDROID_APK_PATH="$_apk_dir/$(basename "$PROJECT_PATH")"
+  PROJECT_PATH="$_apk_dir"
+  TARGET_TYPE="android"
+  unset _apk_dir
+else
+  PROJECT_PATH="$(cd "$PROJECT_PATH" 2>/dev/null && pwd)" || die "Cannot access project path: $_orig_project"
+fi
 if [[ "$MODE" != "deploy" ]]; then
   git -C "$PROJECT_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Not a git repository: $PROJECT_PATH"
 fi
+
+# --- Classify deploy target (auto) ---
+# Skip when --project pointed at an .apk file (target already pinned above).
+# Step 1: discover_android_apk only walks the filesystem looking for *.apk;
+# it never invokes build tools.
+# Step 2: when no APK exists but the tree looks like an Android source project
+# (build.gradle{,.kts}), invoke build_android_apk via a `declare -F` guard so
+# this remains a no-op until the sibling helper (#187) lands. That helper
+# itself owns the trust-boundary gating (authorization / confirm / dry-run,
+# per #189); repolens.sh never calls gradle / gradlew directly here.
+if [[ "$MODE" == "deploy" && "$TARGET_TYPE" != "android" ]]; then
+  _discovered_apk="$(discover_android_apk "$PROJECT_PATH" 2>/dev/null || true)"
+  if [[ -n "$_discovered_apk" ]]; then
+    ANDROID_APK_PATH="$_discovered_apk"
+    TARGET_TYPE="android"
+  fi
+  unset _discovered_apk
+  if [[ -z "$ANDROID_APK_PATH" ]] \
+    && { [[ -f "$PROJECT_PATH/build.gradle" ]] || [[ -f "$PROJECT_PATH/build.gradle.kts" ]]; }; then
+    if declare -F build_android_apk >/dev/null 2>&1; then
+      ANDROID_APK_PATH="$(build_android_apk "$PROJECT_PATH" 2>/dev/null || true)"
+      [[ -n "$ANDROID_APK_PATH" ]] && TARGET_TYPE="android"
+    fi
+  fi
+fi
+
+# Extract Android metadata only after an APK is resolved. All probes are
+# read-only; absence of any tool (aapt, adb) leaves the corresponding
+# variable at its safe default rather than failing the run.
+if [[ "$MODE" == "deploy" && "$TARGET_TYPE" == "android" && -n "$ANDROID_APK_PATH" ]]; then
+  if command -v aapt >/dev/null 2>&1; then
+    ANDROID_PACKAGE_NAME="$(aapt dump badging "$ANDROID_APK_PATH" 2>/dev/null \
+      | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+  elif command -v aapt2 >/dev/null 2>&1; then
+    ANDROID_PACKAGE_NAME="$(aapt2 dump badging "$ANDROID_APK_PATH" 2>/dev/null \
+      | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+  fi
+  if command -v adb >/dev/null 2>&1; then
+    if adb devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {found=1} END {exit !found}'; then
+      ANDROID_HAS_DEVICE="true"
+    fi
+  fi
+fi
+export TARGET_TYPE ANDROID_APK_PATH ANDROID_PACKAGE_NAME ANDROID_HAS_DEVICE
 # shellcheck disable=SC2034 # Read by forge_* wrappers in lib/forge.sh.
 FORGE_PROJECT_PATH="$PROJECT_PATH"
 # shellcheck disable=SC2034 # Read by forge_* wrappers in lib/forge.sh.
@@ -596,12 +666,19 @@ fi
 
 # --- Resolve lens list ---
 resolve_lenses() {
-  # Mode-aware jq filter: discover sees only discover domains, others exclude them
+  # Mode-aware jq filter: discover sees only discover domains, others exclude
+  # them. Deploy mode additionally narrows to a single domain based on
+  # TARGET_TYPE so server and Android lens families never co-run.
+  local deploy_domain="deployment"
+  if [[ "$MODE" == "deploy" && "${TARGET_TYPE:-server}" == "android" ]]; then
+    deploy_domain="android"
+  fi
+
   if [[ -n "$FOCUS" ]]; then
     # Single lens mode — find which domain it belongs to
     local found_domain=""
-    found_domain="$(jq -r --arg lens "$FOCUS" --arg mode "$MODE" \
-      '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
+    found_domain="$(jq -r --arg lens "$FOCUS" --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
+      '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
     [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domains.json (mode: $MODE)"
 
     local lens_file="$LENSES_DIR/$found_domain/$FOCUS.md"
@@ -614,8 +691,8 @@ resolve_lenses() {
   if [[ -n "$DOMAIN_FILTER" ]]; then
     # Domain filter mode
     local domain_exists=""
-    domain_exists="$(jq -r --arg d "$DOMAIN_FILTER" --arg mode "$MODE" \
-      '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.id == $d) | .id' "$DOMAINS_FILE")"
+    domain_exists="$(jq -r --arg d "$DOMAIN_FILTER" --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
+      '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.id == $d) | .id' "$DOMAINS_FILE")"
     [[ -n "$domain_exists" ]] || die "Domain '$DOMAIN_FILTER' not found in domains.json (mode: $MODE)"
 
     jq -r --arg d "$DOMAIN_FILTER" \
@@ -624,8 +701,8 @@ resolve_lenses() {
   fi
 
   # All lenses — ordered by domain order
-  jq -r --arg mode "$MODE" \
-    '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE"
+  jq -r --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
+    '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE"
 }
 
 LENS_LIST=()
@@ -1033,6 +1110,12 @@ run_lens() {
   [[ -n "$CHANGE_STATEMENT" ]] && vars+="|CHANGE_STATEMENT=${CHANGE_STATEMENT}"
   [[ -n "$SOURCE_FILE" ]] && vars+="|SOURCE_PATH=${SOURCE_FILE}"
   [[ -n "$HOSTED_NETWORK" ]] && vars+="|HOSTED_NETWORK=${HOSTED_NETWORK}"
+  if [[ "$MODE" == "deploy" ]]; then
+    vars+="|TARGET_TYPE=${TARGET_TYPE}"
+    vars+="|ANDROID_APK_PATH=${ANDROID_APK_PATH}"
+    vars+="|ANDROID_PACKAGE_NAME=${ANDROID_PACKAGE_NAME}"
+    vars+="|ANDROID_HAS_DEVICE=${ANDROID_HAS_DEVICE}"
+  fi
 
   # Compose prompt (pass local mode params)
   local prompt lens_local_dir=""

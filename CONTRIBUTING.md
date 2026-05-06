@@ -87,7 +87,7 @@ You specialize in identifying race conditions, data races, and unsafe concurrent
 
 ## Domain Taxonomy
 
-RepoLens organizes its 30 domains into default-mode domains (available in audit/feature/bugfix modes) and mode-specific domains (exclusive to their respective modes). See `config/domains.json` for the complete and authoritative list — it is the source of truth for domain definitions.
+RepoLens organizes its 31 domains into default-mode domains (available in audit/feature/bugfix modes) and mode-specific domains (exclusive to their respective modes). See `config/domains.json` for the complete and authoritative list — it is the source of truth for domain definitions.
 
 ### Default-Mode Domains (26)
 
@@ -120,7 +120,7 @@ RepoLens organizes its 30 domains into default-mode domains (available in audit/
 | llm-security | LLM Security | 5 |
 | iac | Infrastructure as Code | 5 |
 
-### Mode-Specific Domains (4)
+### Mode-Specific Domains (5)
 
 These domains have a `"mode"` field in `config/domains.json` that restricts them to a specific run mode. Each mode only sees domains matching its mode value.
 
@@ -128,6 +128,7 @@ These domains have a `"mode"` field in `config/domains.json` that restricts them
 |---|---|---|---|
 | discovery | Product Discovery | `discover` | 14 |
 | deployment | Deployment | `deploy` | 26 |
+| android | Android | `deploy` | 1 |
 | open-source-readiness | Open Source Readiness | `opensource` | 13 |
 | content-quality | Content Quality | `content` | 17 |
 

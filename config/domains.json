@@ -147,6 +147,13 @@
       "lenses": ["service-health", "application-health", "tls-certificates", "dns-resolution", "time-synchronization", "network-security", "load-balancing", "reverse-proxy", "disk-storage", "memory-cpu", "resource-limits", "container-health", "database-health", "queue-messaging", "secrets-credentials", "ssh-access-control", "system-hardening", "log-analysis", "logging-pipeline", "monitoring-health", "backup-verification", "disaster-recovery", "config-drift", "dependency-health", "update-patching", "cronjob-scheduler"]
     },
     {
+      "id": "android",
+      "name": "Android",
+      "order": 31,
+      "mode": "deploy",
+      "lenses": ["apk-overview"]
+    },
+    {
       "id": "open-source-readiness",
       "name": "Open Source Readiness",
       "order": 25,
