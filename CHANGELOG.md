@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- `--hosted` service details now include Docker/HTTP health labels for discovered DAST targets and warn before scanning when every discovered HTTP service is unhealthy or unreachable ([#84](https://github.com/TheMorpheus407/RepoLens/issues/84))
 - `iac/iac-compliance` lens for auditing IaC backups, monitoring alarms, tagging policy, automatic upgrades, CloudTrail, S3 versioning, server-side encryption, lifecycle, access logging, replication, WAF, cost alerts, SNS alerting, service logging, maintenance windows, and disaster recovery controls ([#82](https://github.com/TheMorpheus407/RepoLens/issues/82))
 - `iac/iac-networking` lens for auditing VPC design, subnet topology, NAT gateways, VPC Flow Logs, route tables, security groups, NACLs, peering, transit gateways, DNS, VPN, load balancer placement, and database subnet exposure across Terraform, CloudFormation, Pulumi, and CDK ([#81](https://github.com/TheMorpheus407/RepoLens/issues/81))
 - `llm-security/agent-isolation` lens for auditing agent sandbox boundaries, container privilege, writable host mounts, network reach, subprocess fallbacks, resource limits, and process cleanup ([#75](https://github.com/TheMorpheus407/RepoLens/issues/75))

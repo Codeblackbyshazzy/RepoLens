@@ -293,7 +293,17 @@ Use `--hosted` with the `toolgate` domain when the target project has a Docker C
 ./repolens.sh --project ~/my-app --agent claude --domain toolgate --hosted
 ```
 
-RepoLens starts or reuses the Compose project, connects scanner containers to the same Compose network, and lists services as `http://<service>:<internal-port>`. Discovery prefers Docker-network container ports from Compose metadata, falls back to exposed TCP ports from container metadata, and only uses a published host port when no internal port is known. If a service maps host port `8080` to container port `80`, DAST tools are pointed at `http://service:80`; the published host port is kept only as context. Services with no discovered TCP port are shown as `service:none` and are not guessed.
+RepoLens starts or reuses the Compose project, connects scanner containers to the same Compose network, and lists services as `http://<service>:<internal-port>`. Discovery prefers Docker-network container ports from Compose metadata, falls back to exposed TCP ports from container metadata, and only uses a published host port when no internal port is known. If a service maps host port `8080` to container port `80`, DAST tools are pointed at `http://service:80`; the published host port is kept only as context. Services with no discovered TCP port are shown as `service:none`, marked `[not probed]` in service details, and are not guessed.
+
+Hosted service details include a compact health label so agents can tell whether a target is ready before scanning:
+
+```text
+- web: http://web:80 (internal, nginx:alpine) [healthy]
+- api: http://api:8000 (internal, python:3.12) [responding HTTP 404]
+- job: no discovered port (example/job) [not probed]
+```
+
+RepoLens uses Docker Compose health/status data when available. Services without an explicit health status are probed from inside the Compose network at `http://<service>:<port>/`: 2xx and 3xx responses are `[healthy]`, 4xx responses are `[responding HTTP NNN]`, 5xx responses are `[unhealthy HTTP NNN]`, connection failures are `[unreachable]`, and unavailable probe state is `[unknown]`. If every discovered HTTP service is unhealthy or unreachable, RepoLens logs a warning before agents start so you can fix the Compose stack before spending scan iterations.
 
 ### Environment Variables
 
@@ -488,6 +498,7 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | `Not a git repository: …` | `--project` path is not a git repo | Use `git init`, pass a real repo path, or use `--mode deploy` (which doesn't require git) |
 | `--hosted requires Docker to be installed` | Docker missing or daemon stopped | Install Docker, then `sudo systemctl start docker` (or open Docker Desktop) |
 | `--hosted requires a docker-compose.yml or compose.yml in the project` | No compose file at project root | Add a compose file, or drop `--hosted` and audit statically |
+| `All discovered hosted HTTP services are unhealthy or unreachable` | Every discovered hosted HTTP target failed its Compose health status or HTTP probe | Check `docker compose ps`, service logs, healthchecks, and the service root HTTP paths before spending DAST scan iterations |
 | `Lens '…' not found in domains.json` | Typo in `--focus` lens id, or wrong mode | List available lenses: `jq -r '.domains[].lenses[]' config/domains.json` |
 | `Domain '…' not found in domains.json` | Typo in `--domain` id, or mode mismatch | `discover` / `deploy` / `opensource` / `content` modes only see their own domain — see the [Modes](#modes) table |
 | `Mode 'custom' requires --change "your change statement"` | `--mode custom` without a change statement | Pass `--change "your statement"` |

@@ -39,6 +39,8 @@ DOCKER_PS_Q_RC=0
 DOCKER_INSPECT_RC=0
 DOCKER_INSPECT_FORMAT_OUTPUT=""
 DOCKER_INSPECT_JSON_OUTPUT=""
+DOCKER_RUN_RESPONSES=""
+LOG_WARN_MESSAGES=""
 
 record_pass() {
   TOTAL=$((TOTAL + 1))
@@ -88,6 +90,11 @@ assert_zero_rc() {
   fi
 }
 
+set_docker_run_response() {
+  local service="$1" port="$2" output="$3" rc="$4"
+  DOCKER_RUN_RESPONSES="${DOCKER_RUN_RESPONSES}${service}|${port}|${output}|${rc}"$'\n'
+}
+
 reset_docker_stub() {
   DOCKER_PS_JSON=""
   DOCKER_PS_RC=0
@@ -96,9 +103,17 @@ reset_docker_stub() {
   DOCKER_INSPECT_RC=0
   DOCKER_INSPECT_FORMAT_OUTPUT=""
   DOCKER_INSPECT_JSON_OUTPUT=""
+  DOCKER_RUN_RESPONSES=""
+  LOG_WARN_MESSAGES=""
   : > "$DOCKER_CALL_LOG"
+  HOSTED_NETWORK="issue83_default"
   HOSTED_SERVICES=""
   HOSTED_SERVICES_DETAIL=""
+}
+
+# shellcheck disable=SC2329  # Indirectly invoked by sourced hosted helpers.
+log_warn() {
+  LOG_WARN_MESSAGES="${LOG_WARN_MESSAGES}${1}"$'\n'
 }
 
 # shellcheck disable=SC2329  # Indirectly invoked by sourced hosted helpers.
@@ -126,6 +141,23 @@ docker() {
       printf '%s\n' "$DOCKER_INSPECT_JSON_OUTPUT"
     fi
     return 0
+  fi
+
+  if [[ "${1:-}" == "run" ]]; then
+    local url="${!#}" service port rule_service rule_port rule_output rule_rc
+    if [[ "$url" =~ ^http://([^:/]+):([0-9]+)/ ]]; then
+      service="${BASH_REMATCH[1]}"
+      port="${BASH_REMATCH[2]}"
+      while IFS='|' read -r rule_service rule_port rule_output rule_rc; do
+        [[ -z "$rule_service" ]] && continue
+        if [[ "$rule_service" == "$service" && "$rule_port" == "$port" ]]; then
+          printf '%s' "$rule_output"
+          return "${rule_rc:-0}"
+        fi
+      done <<< "$DOCKER_RUN_RESPONSES"
+    fi
+    printf '000'
+    return 7
   fi
 
   echo "unexpected docker invocation: $*" >&2
@@ -252,6 +284,127 @@ run_discovery
 assert_eq "compact service list skips UDP and uses TCP target" "metrics:9090" "$HOSTED_SERVICES"
 assert_contains "detail uses TCP target port" "http://metrics:9090" "$HOSTED_SERVICES_DETAIL"
 assert_not_contains "detail does not use UDP port" "http://metrics:8125" "$HOSTED_SERVICES_DETAIL"
+
+echo ""
+echo "Test 11: Compose health status is surfaced without probing"
+reset_docker_stub
+DOCKER_PS_JSON="$(cat <<'JSON'
+{"Service":"web","Image":"example/web","ID":"web-id","Health":"healthy","Publishers":[{"TargetPort":80,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"api","Image":"example/api","ID":"api-id","Status":"Up 5 seconds (unhealthy)","Publishers":[{"TargetPort":8000,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"worker","Image":"example/worker","ID":"worker-id","Health":"starting","Publishers":[{"TargetPort":9000,"PublishedPort":0,"Protocol":"tcp"}]}
+JSON
+)"
+run_discovery
+calls="$(docker_calls)"
+assert_contains "healthy healthcheck appears in details" "web: http://web:80 (internal, example/web) [healthy]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "unhealthy healthcheck appears in details" "api: http://api:8000 (internal, example/api) [unhealthy]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "starting healthcheck appears in details" "worker: http://worker:9000 (internal, example/worker) [starting]" "$HOSTED_SERVICES_DETAIL"
+assert_not_contains "explicit health statuses skip curl probe" "run --rm --network" "$calls"
+
+echo ""
+echo "Test 12: unknown health services are probed and 2xx/4xx responses count as responding"
+reset_docker_stub
+DOCKER_PS_JSON="$(cat <<'JSON'
+{"Service":"web","Image":"example/web","ID":"web-id","State":"running","Publishers":[{"TargetPort":80,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"admin","Image":"example/admin","ID":"admin-id","Status":"running","Publishers":[{"TargetPort":9443,"PublishedPort":0,"Protocol":"tcp"}]}
+JSON
+)"
+set_docker_run_response "web" "80" "200" "0"
+set_docker_run_response "admin" "9443" "404" "0"
+run_discovery
+calls="$(docker_calls)"
+assert_contains "probe uses compose network" "run --rm --network issue83_default" "$calls"
+assert_contains "HTTP 200 probe appears healthy" "web: http://web:80 (internal, example/web) [healthy]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "HTTP 404 probe appears responding, not unhealthy" "admin: http://admin:9443 (internal, example/admin) [responding HTTP 404]" "$HOSTED_SERVICES_DETAIL"
+assert_eq "responding probes do not warn" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 13: all unhealthy or unreachable HTTP services trigger a pre-scan warning"
+reset_docker_stub
+DOCKER_PS_JSON="$(cat <<'JSON'
+{"Service":"api","Image":"example/api","ID":"api-id","State":"running","Publishers":[{"TargetPort":8080,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"down","Image":"example/down","ID":"down-id","State":"running","Publishers":[{"TargetPort":8081,"PublishedPort":0,"Protocol":"tcp"}]}
+JSON
+)"
+set_docker_run_response "api" "8080" "503" "0"
+set_docker_run_response "down" "8081" "000" "7"
+run_discovery
+assert_contains "HTTP 503 probe appears unhealthy" "api: http://api:8080 (internal, example/api) [unhealthy HTTP 503]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "nonzero curl probe appears unreachable" "down: http://down:8081 (internal, example/down) [unreachable]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "all-unhealthy case warns before scanning" "All discovered hosted HTTP services are unhealthy or unreachable" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 14: mixed responding and unhealthy services do not warn"
+reset_docker_stub
+DOCKER_PS_JSON="$(cat <<'JSON'
+{"Service":"web","Image":"example/web","ID":"web-id","Health":"healthy","Publishers":[{"TargetPort":80,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"api","Image":"example/api","ID":"api-id","State":"running","Publishers":[{"TargetPort":8080,"PublishedPort":0,"Protocol":"tcp"}]}
+JSON
+)"
+set_docker_run_response "api" "8080" "503" "0"
+run_discovery
+assert_contains "mixed case keeps healthy service status" "web: http://web:80 (internal, example/web) [healthy]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "mixed case keeps unhealthy service status" "api: http://api:8080 (internal, example/api) [unhealthy HTTP 503]" "$HOSTED_SERVICES_DETAIL"
+assert_eq "mixed case does not warn" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 15: missing hosted network produces unknown health and does not run curl"
+reset_docker_stub
+# shellcheck disable=SC2034  # Read by sourced hosted helpers during discovery.
+HOSTED_NETWORK=""
+DOCKER_PS_JSON='{"Service":"web","Image":"example/web","ID":"web-id","State":"running","Publishers":[{"TargetPort":80,"PublishedPort":0,"Protocol":"tcp"}]}'
+run_discovery
+calls="$(docker_calls)"
+assert_contains "missing network appears as unknown health" "web: http://web:80 (internal, example/web) [unknown]" "$HOSTED_SERVICES_DETAIL"
+assert_not_contains "missing network skips curl probe" "run --rm --network" "$calls"
+assert_eq "unknown probe state does not warn" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 16: services without HTTP ports are not probed or counted"
+reset_docker_stub
+DOCKER_PS_JSON='{"Service":"job","Image":"example/job","ID":"job-id","Publishers":[]}'
+DOCKER_INSPECT_JSON_OUTPUT='[{"Config":{"ExposedPorts":{}}}]'
+run_discovery
+calls="$(docker_calls)"
+assert_contains "no-port service gets not-probed status" "job: no discovered port (example/job) [not probed]" "$HOSTED_SERVICES_DETAIL"
+assert_not_contains "no-port service is not probed" "run --rm --network" "$calls"
+assert_eq "no-port service does not warn" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 17: object health and exited statuses are normalized without probing"
+reset_docker_stub
+DOCKER_PS_JSON="$(cat <<'JSON'
+{"Service":"web","Image":"example/web","ID":"web-id","Health":{"Status":"healthy"},"Publishers":[{"TargetPort":80,"PublishedPort":0,"Protocol":"tcp"}]}
+{"Service":"api","Image":"example/api","ID":"api-id","State":"exited","Publishers":[{"TargetPort":8080,"PublishedPort":0,"Protocol":"tcp"}]}
+JSON
+)"
+run_discovery
+calls="$(docker_calls)"
+assert_contains "object health status appears healthy" "web: http://web:80 (internal, example/web) [healthy]" "$HOSTED_SERVICES_DETAIL"
+assert_contains "exited state appears unhealthy" "api: http://api:8080 (internal, example/api) [unhealthy]" "$HOSTED_SERVICES_DETAIL"
+assert_not_contains "object and exited statuses skip curl probe" "run --rm --network" "$calls"
+assert_eq "healthy service prevents all-unhealthy warning" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 18: published-only services are probed on the published fallback port"
+reset_docker_stub
+DOCKER_PS_JSON='{"Service":"admin","Image":"example/admin","ID":"admin-id","State":"running","Publishers":[{"URL":"0.0.0.0","PublishedPort":9443,"Protocol":"tcp"}]}'
+DOCKER_INSPECT_JSON_OUTPUT='[{"Config":{"ExposedPorts":{}}}]'
+set_docker_run_response "admin" "9443" "302" "0"
+run_discovery
+calls="$(docker_calls)"
+assert_contains "published-only probe targets published port" "http://admin:9443/" "$calls"
+assert_contains "HTTP 302 probe appears healthy" "admin: http://admin:9443 (published, example/admin) [healthy]" "$HOSTED_SERVICES_DETAIL"
+assert_eq "3xx published fallback does not warn" "" "$LOG_WARN_MESSAGES"
+
+echo ""
+echo "Test 19: unparseable successful probes remain unknown and do not warn"
+reset_docker_stub
+DOCKER_PS_JSON='{"Service":"api","Image":"example/api","ID":"api-id","State":"running","Publishers":[{"TargetPort":8080,"PublishedPort":0,"Protocol":"tcp"}]}'
+set_docker_run_response "api" "8080" "curl output without status" "0"
+run_discovery
+assert_contains "malformed probe output appears unknown" "api: http://api:8080 (internal, example/api) [unknown]" "$HOSTED_SERVICES_DETAIL"
+assert_eq "unknown successful probe does not warn" "" "$LOG_WARN_MESSAGES"
 
 echo ""
 echo "=========================================="

@@ -19,6 +19,10 @@
 HOSTED_NETWORK=""
 HOSTED_SERVICES=""
 HOSTED_SERVICES_DETAIL=""
+HOSTED_HTTP_SERVICE_COUNT=0
+HOSTED_HTTP_RESPONDING_COUNT=0
+HOSTED_HTTP_UNHEALTHY_COUNT=0
+HOSTED_HTTP_UNKNOWN_COUNT=0
 HOSTED_OWNER="false"  # true if we started the compose project (vs reusing existing)
 
 # detect_compose_file <project_path>
@@ -167,6 +171,107 @@ _inspect_exposed_tcp_port() {
   [[ -n "$port" ]] && printf '%s\n' "$port"
 }
 
+# _parse_service_health_json <json_line>
+#   Extracts Compose health/status fields for normalization.
+_parse_service_health_json() {
+  local json="$1"
+
+  printf '%s' "$json" | jq -r '
+    [
+      (if ((.Health? | type) == "object") then (.Health.Status // empty) else empty end),
+      (if ((.Health? | type) == "string") then .Health else empty end),
+      (.Status // empty),
+      (.State // empty)
+    ]
+    | map(select(. != null and . != "") | tostring)
+    | join(" ")
+  ' 2>/dev/null | tr '\n|' '  ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+}
+
+# _normalize_service_health <raw_status>
+#   Converts Compose/Docker status text into compact prompt-facing labels.
+_normalize_service_health() {
+  local raw_status="$*"
+  local status
+
+  status="$(printf '%s' "$raw_status" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$status" == *"unhealthy"* ]]; then
+    printf 'unhealthy'
+  elif [[ "$status" == *"healthy"* ]]; then
+    printf 'healthy'
+  elif [[ "$status" == *"starting"* || "$status" == *"restarting"* ]]; then
+    printf 'starting'
+  elif [[ "$status" == *"exited"* || "$status" == *"dead"* ]]; then
+    printf 'unhealthy'
+  else
+    printf 'unknown'
+  fi
+}
+
+# _probe_http_service <service_name> <port>
+#   Probes an HTTP endpoint from inside the Compose network and prints a label.
+_probe_http_service() {
+  local service_name="$1" port="$2"
+  local output rc http_code
+
+  if [[ -z "${HOSTED_NETWORK:-}" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+
+  output="$(docker run --rm --network "$HOSTED_NETWORK" curlimages/curl \
+    -s -o /dev/null -w '%{http_code}' \
+    --connect-timeout 2 --max-time 5 \
+    "http://${service_name}:${port}/" 2>/dev/null)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'unreachable'
+    return 0
+  fi
+
+  http_code="$(printf '%s' "$output" | sed -n 's/.*\([0-9][0-9][0-9]\).*/\1/p' | head -1)"
+  if [[ ! "$http_code" =~ ^[0-9][0-9][0-9]$ ]]; then
+    printf 'unknown'
+  elif [[ "$http_code" =~ ^[23] ]]; then
+    printf 'healthy'
+  elif [[ "$http_code" =~ ^4 ]]; then
+    printf 'responding HTTP %s' "$http_code"
+  elif [[ "$http_code" =~ ^5 ]]; then
+    printf 'unhealthy HTTP %s' "$http_code"
+  else
+    printf 'unknown'
+  fi
+}
+
+# _record_hosted_http_health <health_label>
+#   Tracks aggregate HTTP health so hosted mode can warn before scans start.
+_record_hosted_http_health() {
+  local health_label="$1"
+
+  HOSTED_HTTP_SERVICE_COUNT=$((HOSTED_HTTP_SERVICE_COUNT + 1))
+  case "$health_label" in
+    healthy|responding\ HTTP\ *)
+      HOSTED_HTTP_RESPONDING_COUNT=$((HOSTED_HTTP_RESPONDING_COUNT + 1))
+      ;;
+    unknown)
+      HOSTED_HTTP_UNKNOWN_COUNT=$((HOSTED_HTTP_UNKNOWN_COUNT + 1))
+      ;;
+    *)
+      HOSTED_HTTP_UNHEALTHY_COUNT=$((HOSTED_HTTP_UNHEALTHY_COUNT + 1))
+      ;;
+  esac
+}
+
+_warn_if_all_hosted_http_unhealthy() {
+  if [[ "${HOSTED_HTTP_SERVICE_COUNT:-0}" -gt 0 &&
+        "${HOSTED_HTTP_RESPONDING_COUNT:-0}" -eq 0 &&
+        "${HOSTED_HTTP_UNKNOWN_COUNT:-0}" -eq 0 ]]; then
+    if declare -F log_warn >/dev/null 2>&1; then
+      log_warn "All discovered hosted HTTP services are unhealthy or unreachable; agents may not be able to scan live targets."
+    fi
+  fi
+}
+
 # discover_services <compose_file> <project_name>
 #   Populates HOSTED_SERVICES (compact) and HOSTED_SERVICES_DETAIL (for prompts).
 #   Handles both NDJSON (one object per line) and JSON array output from docker compose.
@@ -176,6 +281,10 @@ discover_services() {
 
   HOSTED_SERVICES=""
   HOSTED_SERVICES_DETAIL=""
+  HOSTED_HTTP_SERVICE_COUNT=0
+  HOSTED_HTTP_RESPONDING_COUNT=0
+  HOSTED_HTTP_UNHEALTHY_COUNT=0
+  HOSTED_HTTP_UNKNOWN_COUNT=0
   json_output="$(docker compose -f "$compose_file" -p "$project_name" ps --format json 2>/dev/null)" || return 0
   [[ -z "$json_output" ]] && return 0
 
@@ -188,13 +297,14 @@ discover_services() {
     parsed_lines="$json_output"
   fi
 
-  local line svc_info service_name image container_id port_published target_port internal_port port_display
+  local line svc_info service_name image container_id port_published target_port raw_health internal_port port_display
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     svc_info="$(_parse_service_json "$line")"
     [[ -z "$svc_info" ]] && continue
 
     IFS='|' read -r service_name image container_id port_published target_port <<< "$svc_info"
+    raw_health="$(_parse_service_health_json "$line")"
 
     internal_port="$target_port"
     if [[ -z "$internal_port" ]]; then
@@ -211,22 +321,36 @@ discover_services() {
       HOSTED_SERVICES="${service_name}:${port_display}"
     fi
 
+    local health_label
     if [[ -n "$internal_port" ]]; then
+      health_label="$(_normalize_service_health "$raw_health")"
+      if [[ "$health_label" == "unknown" ]]; then
+        health_label="$(_probe_http_service "$service_name" "$internal_port")"
+      fi
+      _record_hosted_http_health "$health_label"
+
       local port_note="internal"
       if [[ -n "$port_published" && "$port_published" != "$internal_port" ]]; then
         port_note="${port_note}, published host port ${port_published}"
       fi
       HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
-    - ${service_name}: http://${service_name}:${internal_port} (${port_note}, ${image})"
+    - ${service_name}: http://${service_name}:${internal_port} (${port_note}, ${image}) [${health_label}]"
     elif [[ -n "$port_published" ]]; then
+      health_label="$(_normalize_service_health "$raw_health")"
+      if [[ "$health_label" == "unknown" ]]; then
+        health_label="$(_probe_http_service "$service_name" "$port_published")"
+      fi
+      _record_hosted_http_health "$health_label"
+
       HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
-    - ${service_name}: http://${service_name}:${port_published} (published, ${image})"
+    - ${service_name}: http://${service_name}:${port_published} (published, ${image}) [${health_label}]"
     else
       HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
-    - ${service_name}: no discovered port (${image})"
+    - ${service_name}: no discovered port (${image}) [not probed]"
     fi
   done <<< "$parsed_lines"
   HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL#$'\n'}"  # trim leading newline
+  _warn_if_all_hosted_http_unhealthy
 }
 
 # build_hosted_section
@@ -270,6 +394,10 @@ cleanup_hosted() {
   HOSTED_NETWORK=""
   HOSTED_SERVICES=""
   HOSTED_SERVICES_DETAIL=""
+  HOSTED_HTTP_SERVICE_COUNT=0
+  HOSTED_HTTP_RESPONDING_COUNT=0
+  HOSTED_HTTP_UNHEALTHY_COUNT=0
+  HOSTED_HTTP_UNKNOWN_COUNT=0
   HOSTED_OWNER="false"
   log_info "Hosted environment cleanup complete"
   return 0
