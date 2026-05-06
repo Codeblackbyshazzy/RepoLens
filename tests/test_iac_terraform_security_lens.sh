@@ -13,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #78: iac/terraform-completeness lens integration.
+# Tests for issue #79: iac/terraform-security lens integration.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LENS_FILE="$SCRIPT_DIR/prompts/lenses/iac/terraform-completeness.md"
+LENS_FILE="$SCRIPT_DIR/prompts/lenses/iac/terraform-security.md"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
-COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 
 PASS=0
 FAIL=0
@@ -66,10 +65,10 @@ assert_file_exists() {
 }
 
 echo ""
-echo "=== Test Suite: iac/terraform-completeness lens (issue #78) ==="
+echo "=== Test Suite: iac/terraform-security lens (issue #79) ==="
 echo ""
 
-assert_file_exists "terraform-completeness lens prompt exists" "$LENS_FILE"
+assert_file_exists "terraform-security lens prompt exists" "$LENS_FILE"
 
 lens_content=""
 if [[ -f "$LENS_FILE" ]]; then
@@ -78,10 +77,10 @@ fi
 
 echo ""
 echo "Test 1: frontmatter is complete"
-assert_contains "id frontmatter" "id: terraform-completeness" "$lens_content"
+assert_contains "id frontmatter" "id: terraform-security" "$lens_content"
 assert_contains "domain frontmatter" "domain: iac" "$lens_content"
-assert_contains "name frontmatter" "name: Terraform Completeness Audit" "$lens_content"
-assert_contains "role frontmatter" "role: Terraform Completeness Analyst" "$lens_content"
+assert_contains "name frontmatter" "name: Terraform Security Misconfigurations" "$lens_content"
+assert_contains "role frontmatter" "role: Terraform Security Specialist" "$lens_content"
 
 echo ""
 echo "Test 2: body has required sections"
@@ -90,19 +89,26 @@ assert_contains "hunt section" "### What You Hunt For" "$lens_content"
 assert_contains "investigate section" "### How You Investigate" "$lens_content"
 
 echo ""
-echo "Test 3: prompt covers Terraform completeness risks"
+echo "Test 3: prompt covers Terraform security risks"
 for term in \
-  "TODO" \
-  "resource" \
-  "module" \
-  "count = 0" \
-  "for_each = {}" \
-  "variables.tf" \
-  "outputs.tf" \
-  "required_providers" \
-  "backend" \
-  "terraform.lock.hcl" \
-  "terraform plan"; do
+  "0.0.0.0/0" \
+  "::/0" \
+  "aws_s3_bucket_public_access_block" \
+  'acl = "public-read"' \
+  "server_side_encryption_configuration" \
+  "storage_encrypted = true" \
+  "force_ssl" \
+  "deletion_protection" \
+  "IMDSv2" \
+  'http_tokens' \
+  'privileged = true' \
+  '"Action": "*"' \
+  '"Resource": "*"' \
+  "enable_key_rotation = true" \
+  "TLSv1.2_2021" \
+  'viewer_protocol_policy = "redirect-to-https"' \
+  "aws_flow_log" \
+  "access_logs"; do
   assert_contains "prompt mentions $term" "$term" "$lens_content"
 done
 
@@ -131,42 +137,37 @@ iac_mode="$(jq -r '.domains[] | select(.id == "iac") | .mode // "null"' "$DOMAIN
 assert_eq "no mode field" "null" "$iac_mode"
 
 echo ""
-echo "Test 7: iac domain contains terraform-completeness"
+echo "Test 7: iac domain contains both Terraform lenses"
 iac_lenses="$(jq -r '.domains[] | select(.id == "iac") | .lenses | join(",")' "$DOMAINS_FILE")"
 assert_eq "registered lens list" "terraform-completeness,terraform-security" "$iac_lenses"
 
 echo ""
-echo "Test 8: iac label color is configured"
-iac_color="$(jq -r '.iac // empty' "$COLORS_FILE")"
-assert_eq "iac label color" "844fba" "$iac_color"
-
-echo ""
-echo "Test 9: Audit-like mode resolution includes the iac lens"
+echo "Test 8: Audit-like mode resolution includes terraform-security"
 audit_lenses="$(jq -r --arg mode "audit" \
   '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-if grep -qxF "iac/terraform-completeness" <<< "$audit_lenses"; then
+if grep -qxF "iac/terraform-security" <<< "$audit_lenses"; then
   PASS=$((PASS + 1))
   TOTAL=$((TOTAL + 1))
-  echo "  PASS: audit mode includes iac/terraform-completeness"
+  echo "  PASS: audit mode includes iac/terraform-security"
 else
   FAIL=$((FAIL + 1))
   TOTAL=$((TOTAL + 1))
-  echo "  FAIL: audit mode should include iac/terraform-completeness"
+  echo "  FAIL: audit mode should include iac/terraform-security"
 fi
 
 echo ""
-echo "Test 10: Exclusive modes do not include the iac lens"
+echo "Test 9: Exclusive modes do not include terraform-security"
 for mode in discover deploy opensource content; do
   mode_lenses="$(jq -r --arg mode "$mode" \
     '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-  if grep -qxF "iac/terraform-completeness" <<< "$mode_lenses"; then
+  if grep -qxF "iac/terraform-security" <<< "$mode_lenses"; then
     FAIL=$((FAIL + 1))
     TOTAL=$((TOTAL + 1))
-    echo "  FAIL: $mode mode should not include iac/terraform-completeness"
+    echo "  FAIL: $mode mode should not include iac/terraform-security"
   else
     PASS=$((PASS + 1))
     TOTAL=$((TOTAL + 1))
-    echo "  PASS: $mode mode excludes iac/terraform-completeness"
+    echo "  PASS: $mode mode excludes iac/terraform-security"
   fi
 done
 
