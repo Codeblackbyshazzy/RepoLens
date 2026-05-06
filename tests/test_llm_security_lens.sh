@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #73: llm-security/output-sanitization lens integration.
+# Tests for issues #73 and #74: llm-security lens integration.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LENS_FILE="$SCRIPT_DIR/prompts/lenses/llm-security/output-sanitization.md"
+LENS_DIR="$SCRIPT_DIR/prompts/lenses/llm-security"
+OUTPUT_LENS_FILE="$LENS_DIR/output-sanitization.md"
+PROMPT_INJECTION_LENS_FILE="$LENS_DIR/prompt-injection.md"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 
@@ -66,14 +68,20 @@ assert_file_exists() {
 }
 
 echo ""
-echo "=== Test Suite: llm-security lens (issue #73) ==="
+echo "=== Test Suite: llm-security lenses (issues #73 and #74) ==="
 echo ""
 
-assert_file_exists "output-sanitization lens prompt exists" "$LENS_FILE"
+assert_file_exists "output-sanitization lens prompt exists" "$OUTPUT_LENS_FILE"
+assert_file_exists "prompt-injection lens prompt exists" "$PROMPT_INJECTION_LENS_FILE"
 
 lens_content=""
-if [[ -f "$LENS_FILE" ]]; then
-  lens_content="$(cat "$LENS_FILE")"
+if [[ -f "$OUTPUT_LENS_FILE" ]]; then
+  lens_content="$(cat "$OUTPUT_LENS_FILE")"
+fi
+
+prompt_injection_content=""
+if [[ -f "$PROMPT_INJECTION_LENS_FILE" ]]; then
+  prompt_injection_content="$(cat "$PROMPT_INJECTION_LENS_FILE")"
 fi
 
 echo ""
@@ -112,53 +120,90 @@ for term in \
 done
 
 echo ""
-echo "Test 4: llm-security domain is registered once"
+echo "Test 4: prompt-injection frontmatter is complete"
+assert_contains "id frontmatter" "id: prompt-injection" "$prompt_injection_content"
+assert_contains "domain frontmatter" "domain: llm-security" "$prompt_injection_content"
+assert_contains "name frontmatter" "name: LLM Prompt Injection Surfaces" "$prompt_injection_content"
+assert_contains "role frontmatter" "role: LLM Prompt Injection Specialist" "$prompt_injection_content"
+
+echo ""
+echo "Test 5: prompt-injection body has required sections"
+assert_contains "expert focus section" "## Your Expert Focus" "$prompt_injection_content"
+assert_contains "hunt section" "### What You Hunt For" "$prompt_injection_content"
+assert_contains "investigate section" "### How You Investigate" "$prompt_injection_content"
+
+echo ""
+echo "Test 6: prompt-injection covers LLM prompt injection risks"
+for term in \
+  "LLM prompt injection" \
+  "Direct Prompt Injection" \
+  "System Prompt Weakness" \
+  "Indirect Injection via RAG" \
+  "Tool-Use and Function-Calling Abuse" \
+  "Chat History and Multi-Turn Injection" \
+  "role confusion" \
+  "Multi-Step Agent Chain Injection" \
+  "Missing Output Validation" \
+  "Prompt Template Management"; do
+  assert_contains "prompt mentions $term" "$term" "$prompt_injection_content"
+done
+
+echo ""
+echo "Test 7: llm-security domain is registered once"
 domain_count="$(jq '[.domains[] | select(.id == "llm-security")] | length' "$DOMAINS_FILE")"
 assert_eq "one llm-security domain" "1" "$domain_count"
 
 echo ""
-echo "Test 5: llm-security domain is mode-less default audit coverage"
+echo "Test 8: llm-security domain is mode-less default audit coverage"
 domain_mode="$(jq -r '.domains[] | select(.id == "llm-security") | .mode // "null"' "$DOMAINS_FILE")"
 assert_eq "no mode field" "null" "$domain_mode"
 
 echo ""
-echo "Test 6: llm-security domain contains output-sanitization"
+echo "Test 9: llm-security domain contains both lenses"
 domain_lenses="$(jq -r '.domains[] | select(.id == "llm-security") | .lenses | join(",")' "$DOMAINS_FILE")"
-assert_eq "registered lens list" "output-sanitization" "$domain_lenses"
+assert_eq "registered lens list" "output-sanitization,prompt-injection" "$domain_lenses"
 
 echo ""
-echo "Test 7: llm-security label color is configured"
+echo "Test 10: llm-security label color is configured"
 label_color="$(jq -r '."llm-security" // empty' "$COLORS_FILE")"
 assert_eq "llm-security label color" "b91c1c" "$label_color"
 
 echo ""
-echo "Test 8: Audit-like mode resolution includes llm-security/output-sanitization"
+echo "Test 11: Audit-like mode resolution includes both llm-security lenses"
 audit_lenses="$(jq -r --arg mode "audit" \
   '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-if grep -qxF "llm-security/output-sanitization" <<< "$audit_lenses"; then
-  PASS=$((PASS + 1))
-  TOTAL=$((TOTAL + 1))
-  echo "  PASS: audit mode includes llm-security/output-sanitization"
-else
-  FAIL=$((FAIL + 1))
-  TOTAL=$((TOTAL + 1))
-  echo "  FAIL: audit mode should include llm-security/output-sanitization"
-fi
+for expected_lens in \
+  "llm-security/output-sanitization" \
+  "llm-security/prompt-injection"; do
+  if grep -qxF "$expected_lens" <<< "$audit_lenses"; then
+    PASS=$((PASS + 1))
+    TOTAL=$((TOTAL + 1))
+    echo "  PASS: audit mode includes $expected_lens"
+  else
+    FAIL=$((FAIL + 1))
+    TOTAL=$((TOTAL + 1))
+    echo "  FAIL: audit mode should include $expected_lens"
+  fi
+done
 
 echo ""
-echo "Test 9: Exclusive modes do not include llm-security/output-sanitization"
+echo "Test 12: Exclusive modes do not include llm-security lenses"
 for mode in discover deploy opensource content; do
   mode_lenses="$(jq -r --arg mode "$mode" \
     '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-  if grep -qxF "llm-security/output-sanitization" <<< "$mode_lenses"; then
-    FAIL=$((FAIL + 1))
-    TOTAL=$((TOTAL + 1))
-    echo "  FAIL: $mode mode should not include llm-security/output-sanitization"
-  else
-    PASS=$((PASS + 1))
-    TOTAL=$((TOTAL + 1))
-    echo "  PASS: $mode mode excludes llm-security/output-sanitization"
-  fi
+  for excluded_lens in \
+    "llm-security/output-sanitization" \
+    "llm-security/prompt-injection"; do
+    if grep -qxF "$excluded_lens" <<< "$mode_lenses"; then
+      FAIL=$((FAIL + 1))
+      TOTAL=$((TOTAL + 1))
+      echo "  FAIL: $mode mode should not include $excluded_lens"
+    else
+      PASS=$((PASS + 1))
+      TOTAL=$((TOTAL + 1))
+      echo "  PASS: $mode mode excludes $excluded_lens"
+    fi
+  done
 done
 
 echo ""

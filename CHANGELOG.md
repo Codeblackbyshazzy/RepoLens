@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- `llm-security/prompt-injection` lens for auditing prompt composition, instruction hierarchy, RAG/tool/chat-history injection, multi-step agent propagation, output validation, and prompt template management ([#74](https://github.com/TheMorpheus407/RepoLens/issues/74))
 - `llm-security/output-sanitization` lens for treating LLM-generated content as untrusted data across HTML rendering, Markdown/external system forwarding, dangerous URL handling, filesystem/command sinks, and structured output validation ([#73](https://github.com/TheMorpheus407/RepoLens/issues/73))
 - `kubernetes/secrets-management` lens for Kubernetes-native secret manifests, SealedSecrets, SOPS, External Secrets Operator references, secret RBAC, ServiceAccount token mounting, ConfigMap secret leakage, and rotation evidence ([#72](https://github.com/TheMorpheus407/RepoLens/issues/72))
 - `kubernetes/ingress-tls` lens for Ingress TLS coverage, cert-manager evidence, HSTS, SSL redirect, NGINX Ingress hardening annotations, host/path conflicts, backend protocol checks, and TLS Secret cross-checking ([#70](https://github.com/TheMorpheus407/RepoLens/issues/70))
