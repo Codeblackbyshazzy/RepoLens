@@ -177,6 +177,12 @@
       "name": "LLM Security",
       "order": 29,
       "lenses": ["output-sanitization", "prompt-injection", "agent-isolation", "cost-control", "credential-exposure"]
+    },
+    {
+      "id": "iac",
+      "name": "Infrastructure as Code",
+      "order": 30,
+      "lenses": ["terraform-completeness"]
     }
   ]
 }
