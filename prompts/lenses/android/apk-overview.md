@@ -37,7 +37,7 @@ The target APK is at `{{ANDROID_APK_PATH}}` (target type: `{{TARGET_TYPE}}`). Th
 - Outdated bundled libraries with known CVEs.
 
 **Runtime concerns (only when `{{ANDROID_HAS_DEVICE}}` is `true`)**
-- Application installs but crashes on launch (`adb logcat` shows uncaught exceptions tied to `{{ANDROID_PACKAGE_NAME}}`).
+- An already-installed copy of the application crashes on launch (`adb logcat` shows uncaught exceptions tied to `{{ANDROID_PACKAGE_NAME}}`).
 - Application requests sensitive runtime permissions on first launch with no clear in-app explanation.
 - Application transmits in cleartext over HTTP at runtime.
 - Application logs PII, tokens, or session identifiers via `Log.*` / logcat.
@@ -59,12 +59,11 @@ The APK lives at `{{ANDROID_APK_PATH}}`. Use only **read-only** static inspectio
 
 **Dynamic checks (only when `{{ANDROID_HAS_DEVICE}}` == `true`)**
 - `adb devices -l` — confirm a non-`offline`, non-`unauthorized` device is attached.
-- `adb install -r "{{ANDROID_APK_PATH}}"` — install, then immediately launch.
-- `adb shell pm list packages | grep "{{ANDROID_PACKAGE_NAME}}"` — confirm install.
+- `adb shell pm list packages | grep "{{ANDROID_PACKAGE_NAME}}"` — confirm whether the target package is already present.
 - `adb shell dumpsys package "{{ANDROID_PACKAGE_NAME}}"` — runtime permission grants, signing, install source.
 - `adb logcat -d --pid=$(adb shell pidof {{ANDROID_PACKAGE_NAME}}) | tail -200` — recent runtime logs from the app.
 
-If `{{ANDROID_HAS_DEVICE}}` is `false`, **do not** attempt any `adb install` / runtime command — report that runtime checks were skipped because no device was attached.
+If `{{ANDROID_HAS_DEVICE}}` is `false`, **do not** attempt any runtime command — report that runtime checks were skipped because no device was attached.
 
 ### Reporting Bar
 

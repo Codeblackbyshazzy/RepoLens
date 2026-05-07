@@ -46,6 +46,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOLENS="$SCRIPT_DIR/repolens.sh"
 TEMPLATE_LIB="$SCRIPT_DIR/lib/template.sh"
 DEPLOY_BASE="$SCRIPT_DIR/prompts/_base/deploy.md"
+ANDROID_BASE="$SCRIPT_DIR/prompts/_base/android.md"
 APK_LENS="$SCRIPT_DIR/prompts/lenses/android/apk-overview.md"
 
 PASS=0
@@ -279,6 +280,7 @@ EXPECTED_HAS_DEV="true"
 VARS="PROJECT_PATH=/proj|TARGET_TYPE=android|ANDROID_APK_PATH=${EXPECTED_APK}|ANDROID_PACKAGE_NAME=${EXPECTED_PKG}|ANDROID_HAS_DEVICE=${EXPECTED_HAS_DEV}"
 
 rendered="$(compose_prompt "$DEPLOY_BASE" "$APK_LENS" "$VARS" "" "deploy" "" "" "false" "false" "")"
+android_rendered="$(compose_prompt "$ANDROID_BASE" "$APK_LENS" "$VARS" "" "deploy" "" "" "false" "false" "")"
 
 assert_contains "rendered prompt substitutes ANDROID_APK_PATH literally" "$EXPECTED_APK" "$rendered"
 assert_contains "rendered prompt substitutes ANDROID_PACKAGE_NAME literally" "$EXPECTED_PKG" "$rendered"
@@ -288,6 +290,14 @@ assert_not_contains "no unresolved {{ANDROID_APK_PATH}} placeholder" "{{ANDROID_
 assert_not_contains "no unresolved {{ANDROID_PACKAGE_NAME}} placeholder" "{{ANDROID_PACKAGE_NAME}}" "$rendered"
 assert_not_contains "no unresolved {{ANDROID_HAS_DEVICE}} placeholder" "{{ANDROID_HAS_DEVICE}}" "$rendered"
 assert_not_contains "no unresolved {{TARGET_TYPE}} placeholder" "{{TARGET_TYPE}}" "$rendered"
+assert_contains "rendered android prompt creates private decoded workspace" 'umask 077; android_work="$(mktemp -d)"' "$android_rendered"
+assert_contains "rendered android prompt sends apktool output under private workspace" 'apktool d -f "'"$EXPECTED_APK"'" -o "$apktool_out"' "$android_rendered"
+assert_contains "rendered android prompt cleans decoded workspace" 'rm -rf -- "$android_work"' "$android_rendered"
+assert_not_contains "rendered android prompt avoids fixed apktool temp path" "/tmp/apk-decode" "$android_rendered"
+assert_not_contains "rendered android prompt avoids fixed jadx temp path" "/tmp/apk-jadx" "$android_rendered"
+assert_contains "rendered android prompt uses attach-only frida" 'frida -U -n "'"$EXPECTED_PKG"'" -l hook.js' "$android_rendered"
+assert_not_contains "rendered android prompt avoids frida spawn" 'frida -U -f' "$android_rendered"
+assert_not_contains "rendered android prompt avoids frida no-pause spawn flag" "--no-pause" "$android_rendered"
 
 # ---------------------------------------------------------------------------
 # Metadata extraction parsing — tested in isolation against the actual
