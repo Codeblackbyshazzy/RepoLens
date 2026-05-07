@@ -71,6 +71,7 @@ run_agent() {
 
   (
     cd "$project_path" || die "Failed to cd into: $project_path"
+    export PROJECT_PATH="$PWD"
     # Close stdin so agents that fall back to interactive prompts (auth
     # failure, login wizard) exit quickly instead of blocking on a read
     # that will never deliver input.
