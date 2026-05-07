@@ -13,19 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #91 — Android APK secrets lens.
+# Tests for issue #93 - Android WebView security lens.
 #
 # Behavioural contract:
-#   - android/secrets-in-apk exists and is registered in config/domains.json.
-#   - Shell examples use the exported runtime APK path variable, not direct
-#     template interpolation of the APK path inside commands.
-#   - Decode output goes under a private per-run scratch tree and is cleaned up,
-#     never fixed shared paths for secret-bearing APK contents.
+#   - android/webview-security exists and is registered in config/domains.json.
+#   - The prompt covers the WebView APIs named in the issue.
+#   - Shell examples use the exported runtime APK path variable through a
+#     local shell variable, not fixed shared decode paths.
+#   - Examples remain read-only and avoid device/app mutation commands.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LENS_FILE="$SCRIPT_DIR/prompts/lenses/android/secrets-in-apk.md"
+LENS_FILE="$SCRIPT_DIR/prompts/lenses/android/webview-security.md"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 
 PASS=0
@@ -62,24 +62,15 @@ assert_not_contains() {
   fi
 }
 
-assert_eq() {
-  local desc="$1" expected="$2" actual="$3"
-  if [[ "$expected" == "$actual" ]]; then
-    record_pass "$desc"
-  else
-    record_fail "$desc (expected='$expected' actual='$actual')"
-  fi
-}
-
 echo ""
-echo "=== Test Suite: Android APK secrets lens (issue #91) ==="
+echo "=== Test Suite: Android WebView security lens (issue #93) ==="
 echo ""
 
 echo "Test 1: lens file exists"
 if [[ -f "$LENS_FILE" ]]; then
-  record_pass "secrets-in-apk lens file exists"
+  record_pass "webview-security lens file exists"
 else
-  record_fail "secrets-in-apk lens file exists"
+  record_fail "webview-security lens file exists"
 fi
 
 lens_content=""
@@ -89,37 +80,68 @@ fi
 
 echo ""
 echo "Test 2: frontmatter is complete"
-assert_contains "id frontmatter" "id: secrets-in-apk" "$lens_content"
+assert_contains "id frontmatter" "id: webview-security" "$lens_content"
 assert_contains "domain frontmatter" "domain: android" "$lens_content"
-assert_contains "name frontmatter" "name: APK Secrets Hunter" "$lens_content"
-assert_contains "role frontmatter" "role: Android Secrets & Credentials Analyst" "$lens_content"
+assert_contains "name frontmatter" "name: WebView Security Auditor" "$lens_content"
+assert_contains "role frontmatter" "role: Android WebView Specialist" "$lens_content"
 
 echo ""
 echo "Test 3: lens is registered under android deploy domain"
 android_lenses="$(jq -r '.domains[] | select(.id == "android") | .lenses[]' "$DOMAINS_FILE")"
-assert_contains "registered android lens list includes secrets-in-apk" "secrets-in-apk" "$android_lenses"
+assert_contains "registered android lens list includes webview-security" "webview-security" "$android_lenses"
 
 echo ""
-echo "Test 4: investigation commands use shell-safe runtime APK variable"
+echo "Test 4: issue APIs are covered"
+for api in \
+  "addJavascriptInterface" \
+  "setJavaScriptEnabled" \
+  "setAllowFileAccess" \
+  "setAllowFileAccessFromFileURLs" \
+  "setAllowUniversalAccessFromFileURLs" \
+  "setMixedContentMode" \
+  "MIXED_CONTENT_ALWAYS_ALLOW" \
+  "onReceivedSslError" \
+  "proceed()" \
+  "shouldOverrideUrlLoading" \
+  "WebView.setWebContentsDebuggingEnabled" \
+  "setAcceptThirdPartyCookies" \
+  "setSavePassword" \
+  "setPluginState"; do
+  assert_contains "covers $api" "$api" "$lens_content"
+done
+
+echo ""
+echo "Test 5: investigation commands use shell-safe runtime APK variable"
 assert_contains "assigns runtime APK path to local variable" 'apk_path=${ANDROID_APK_PATH:?ANDROID_APK_PATH is required}' "$lens_content"
-assert_contains "uses quoted APK variable for unzip inventory" 'unzip -l "$apk_path"' "$lens_content"
 assert_contains "uses quoted APK variable for aapt" 'aapt dump badging "$apk_path"' "$lens_content"
-assert_contains "uses quoted APK variable for aapt2" 'aapt2 dump badging "$apk_path"' "$lens_content"
+assert_contains "uses quoted APK variable for aapt xmltree" 'aapt dump xmltree "$apk_path" AndroidManifest.xml' "$lens_content"
+assert_contains "uses quoted APK variable for unzip inventory" 'unzip -l "$apk_path"' "$lens_content"
 assert_contains "uses quoted APK variable for DEX streaming" 'unzip -p "$apk_path" classes.dex | strings' "$lens_content"
 assert_contains "uses quoted APK variable for apktool" 'apktool d -f "$apk_path" -o "$apktool_out"' "$lens_content"
-assert_contains "uses quoted APK variable for jadx" 'jadx --deobf -d "$jadx_out" "$apk_path"' "$lens_content"
+assert_contains "uses quoted APK variable for jadx" 'jadx -d "$jadx_out" "$apk_path"' "$lens_content"
 assert_not_contains "does not quote template APK path in commands" '"{{ANDROID_APK_PATH}}"' "$lens_content"
 
 echo ""
-echo "Test 5: decoded output uses private per-run scratch directory"
+echo "Test 6: decoded output uses private per-run scratch directory"
 assert_contains "sets restrictive umask for scratch tree" 'umask 077' "$lens_content"
 assert_contains "creates unique scratch directory" 'scratch_dir="$(mktemp -d)"' "$lens_content"
 assert_contains "places apktool output under scratch tree" 'apktool_out="$scratch_dir/apktool"' "$lens_content"
 assert_contains "places jadx output under scratch tree" 'jadx_out="$scratch_dir/jadx"' "$lens_content"
 assert_contains "cleans decoded scratch output" 'rm -rf -- "$scratch_dir"' "$lens_content"
-assert_not_contains "does not use fixed apktool shared path" "/tmp/apk-secrets" "$lens_content"
 assert_not_contains "does not use fixed jadx shared path" "/tmp/apk-jadx" "$lens_content"
 assert_not_contains "does not use any hard-coded tmp directory" "/tmp/" "$lens_content"
+
+echo ""
+echo "Test 7: examples avoid device and app mutation commands"
+for forbidden in \
+  "adb install" \
+  "pm clear" \
+  "am force-stop" \
+  "settings put" \
+  "adb push" \
+  "input tap"; do
+  assert_not_contains "does not mention $forbidden" "$forbidden" "$lens_content"
+done
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
