@@ -151,7 +151,7 @@
       "name": "Android",
       "order": 31,
       "mode": "deploy",
-      "lenses": ["apk-overview", "secrets-in-apk", "apk-dependencies", "native-libraries", "webview-security", "manifest-audit", "network-security-config", "exported-components", "intent-filters", "logcat-leaks"]
+      "lenses": ["apk-overview", "secrets-in-apk", "apk-dependencies", "native-libraries", "webview-security", "manifest-audit", "network-security-config", "exported-components", "intent-filters", "logcat-leaks", "ssl-pinning-mitm"]
     },
     {
       "id": "open-source-readiness",
