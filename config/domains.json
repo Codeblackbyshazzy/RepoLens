@@ -151,7 +151,7 @@
       "name": "Android",
       "order": 31,
       "mode": "deploy",
-      "lenses": ["apk-overview", "secrets-in-apk", "apk-dependencies", "native-libraries", "webview-security", "manifest-audit", "network-security-config", "exported-components", "intent-filters", "logcat-leaks", "ssl-pinning-mitm", "frida-runtime"]
+      "lenses": ["apk-overview", "secrets-in-apk", "apk-dependencies", "native-libraries", "webview-security", "manifest-audit", "network-security-config", "exported-components", "intent-filters", "intent-fuzzing", "logcat-leaks", "ssl-pinning-mitm", "frida-runtime"]
     },
     {
       "id": "open-source-readiness",
