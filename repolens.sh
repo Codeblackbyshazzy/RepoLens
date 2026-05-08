@@ -159,13 +159,16 @@ Environment:
   REPOLENS_AGENT_KILL_GRACE
                            Seconds after an agent timeout to wait after SIGTERM
                            before timeout(1) escalates to SIGKILL (default: 30).
+  REPOLENS_RATE_LIMIT_MAX_SLEEP
+                           Maximum parsed agent rate-limit wait in seconds
+                           before falling back to abort behavior (default: 21600).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
                            (default: 144000). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
                            any child that exceeds this deadline, then continues
                            with the remaining children. Should be >=
                            MAX_ITERATIONS_PER_LENS * resolved agent timeout plus
-                           a buffer for non-agent I/O.
+                           a buffer for rate-limit sleep and non-agent I/O.
   REPOLENS_CLEANUP_GRACE   Interrupt cleanup grace in seconds (default: 5).
                            On Ctrl-C or TERM, tracked parallel workers receive
                            SIGTERM, are polled for this grace period, then any
@@ -419,6 +422,11 @@ AGENT_KILL_GRACE_SECS="$(resolve_agent_kill_grace)"
 if [[ ! "$AGENT_KILL_GRACE_SECS" =~ ^[0-9]+$ || "$AGENT_KILL_GRACE_SECS" -le 0 ]]; then
   die "REPOLENS_AGENT_KILL_GRACE must be a positive integer number of seconds"
 fi
+RATE_LIMIT_MAX_SLEEP_SECS="${REPOLENS_RATE_LIMIT_MAX_SLEEP:-21600}"
+if [[ ! "$RATE_LIMIT_MAX_SLEEP_SECS" =~ ^[0-9]+$ ]]; then
+  die "REPOLENS_RATE_LIMIT_MAX_SLEEP must be a non-negative integer number of seconds"
+fi
+RATE_LIMIT_MAX_SLEEP_SECS=$((10#$RATE_LIMIT_MAX_SLEEP_SECS))
 
 # --- Validate --change requirement ---
 if [[ "$MODE" == "custom" && -z "$CHANGE_STATEMENT" ]]; then
@@ -1276,6 +1284,8 @@ run_lens() {
   local lens_issues=0
   local prev_lens_issues=0
   local exit_status="completed"
+  local rate_limit_retry_attempted=false
+  local rate_limit_sleep_seconds=0
 
   while true; do
     iteration=$((iteration + 1))
@@ -1313,6 +1323,41 @@ run_lens() {
       if [[ -n "$rl_hit" ]]; then
         rl_sig="${rl_hit%%|*}"
         rl_snip="${rl_hit#*|}"
+
+        if ! $rate_limit_retry_attempted; then
+          local resume_epoch now_epoch wait_delta sleep_seconds resume_label
+          resume_epoch="$(parse_rate_limit_resume_epoch "$output_file" || true)"
+          if [[ "$resume_epoch" =~ ^[0-9]+$ ]]; then
+            now_epoch="$(date +%s)"
+            if [[ "$resume_epoch" -lt $((now_epoch - 60)) ]]; then
+              resume_epoch=""
+            else
+              wait_delta=$((resume_epoch - now_epoch))
+              if [[ "$wait_delta" -lt 0 ]]; then
+                wait_delta=0
+              fi
+
+              if [[ "$wait_delta" -le "$RATE_LIMIT_MAX_SLEEP_SECS" ]]; then
+                sleep_seconds=$((wait_delta + 60))
+                resume_label="$(date -u -d "@$resume_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$resume_epoch")"
+                log_warn "[$domain/$lens_id] Agent rate-limited. Resume at $resume_label (${sleep_seconds}s from now). Sleeping."
+                rate_limit_retry_attempted=true
+                rate_limit_sleep_seconds=$((rate_limit_sleep_seconds + sleep_seconds))
+                if env --help 2>&1 | grep -q -- '--default-signal'; then
+                  if ! env --default-signal=INT sleep "$sleep_seconds"; then
+                    log_warn "[$domain/$lens_id] Rate-limit sleep interrupted."
+                    exit 130
+                  fi
+                elif ! sleep "$sleep_seconds"; then
+                  log_warn "[$domain/$lens_id] Rate-limit sleep interrupted."
+                  exit 130
+                fi
+                continue
+              fi
+            fi
+          fi
+        fi
+
         log_error "[$domain/$lens_id] Agent rate-limited / quota exceeded. Aborting run. Matched: $rl_sig. Snippet: $rl_snip"
         : > "$LOG_BASE/.rate-limit-abort"
         exit_status="rate-limited"
@@ -1383,7 +1428,7 @@ run_lens() {
 
   # Record result. Rate-limited lenses are recorded but NOT marked completed,
   # so --resume will re-run them on the next invocation.
-  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues"
+  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds"
   if [[ "$exit_status" != "rate-limited" ]]; then
     mark_lens_completed "$lens_entry"
   fi
@@ -1407,7 +1452,7 @@ if $PARALLEL; then
         skip_domain="${skip_entry%%/*}"
         skip_lens="${skip_entry#*/}"
         if ! is_lens_completed "$skip_entry"; then
-          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0
+          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0 0
         fi
       done
       set_stop_reason "$SUMMARY_FILE" "rate-limited"
@@ -1437,7 +1482,7 @@ else
         skip_domain="${skip_entry%%/*}"
         skip_lens="${skip_entry#*/}"
         if ! is_lens_completed "$skip_entry"; then
-          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0
+          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0 0
         fi
       done
       set_stop_reason "$SUMMARY_FILE" "rate-limited"
@@ -1451,7 +1496,7 @@ else
         skip_domain="${skip_entry%%/*}"
         skip_lens="${skip_entry#*/}"
         if ! is_lens_completed "$skip_entry"; then
-          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0
+          record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0 0
         fi
       done
       set_stop_reason "$SUMMARY_FILE" "max-issues-reached"

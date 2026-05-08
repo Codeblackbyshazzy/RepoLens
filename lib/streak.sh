@@ -122,3 +122,94 @@ detect_agent_rate_limit() {
   done
   return 1
 }
+
+# parse_rate_limit_resume_epoch <output_file>
+#   Prints a Unix epoch when a known rate-limit resume time can be parsed from
+#   ANSI-stripped agent output. Prints nothing when no usable resume time is
+#   present. This helper intentionally does not decide whether the output is a
+#   rate-limit failure; callers must keep that check separate.
+parse_rate_limit_resume_epoch() {
+  local file="$1"
+  [[ -s "$file" ]] || { echo ""; return 0; }
+
+  local stripped now_epoch seconds line fragment lower candidate epoch
+  stripped="$(strip_ansi < "$file" 2>/dev/null)"
+  [[ -n "$stripped" ]] || { echo ""; return 0; }
+
+  now_epoch="$(date +%s)"
+
+  seconds="$(printf '%s\n' "$stripped" | sed -nE 's/.*[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:[[:space:]]*([0-9]+).*/\1/p' | head -n 1)"
+  if [[ "$seconds" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' $((now_epoch + seconds))
+    return 0
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'retry[[:space:]]+after[[:space:]]+[0-9]+[[:space:]]+seconds?' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lower" =~ retry[[:space:]]+after[[:space:]]+([0-9]+)[[:space:]]+seconds?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]}))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'try again in[[:space:]]+[0-9]' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    fragment="$(printf '%s\n' "$line" | sed -E 's/.*[Tt][Rr][Yy][[:space:]]+[Aa][Gg][Aa][Ii][Nn][[:space:]]+[Ii][Nn][[:space:]]+//')"
+    lower="$(printf '%s' "$fragment" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*h([[:space:]]*([0-9]+)[[:space:]]*m)?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 3600))
+      if [[ -n "${BASH_REMATCH[3]:-}" ]]; then
+        seconds=$((seconds + 10#${BASH_REMATCH[3]} * 60))
+      fi
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(hours?|hrs?|hr)([[:space:]]+([0-9]+)[[:space:]]*(minutes?|mins?|min))?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 3600))
+      if [[ -n "${BASH_REMATCH[4]:-}" ]]; then
+        seconds=$((seconds + 10#${BASH_REMATCH[4]} * 60))
+      fi
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(minutes?|mins?|min|m)([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 60))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(seconds?|secs?|sec|s)([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]}))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+  fi
+
+  candidate="$(printf '%s\n' "$stripped" | sed -nE 's/.*[Tt][Rr][Yy][[:space:]]+[Aa][Gg][Aa][Ii][Nn][[:space:]]+[Aa][Tt][[:space:]]+(.+)/\1/p' | head -n 1)"
+  [[ -n "$candidate" ]] || { echo ""; return 0; }
+
+  candidate="${candidate#"${candidate%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  while [[ "$candidate" == *. || "$candidate" == *";" ]]; do
+    candidate="${candidate%?}"
+  done
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  candidate="$(printf '%s' "$candidate" | sed -E 's/([0-9]+)([sS][tT]|[nN][dD]|[rR][dD]|[tT][hH])([^[:alpha:]]|$)/\1\3/g')"
+
+  epoch="$(date -d "$candidate" +%s 2>/dev/null || true)"
+  if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+    if [[ "$candidate" =~ ^[0-9]{1,2}:[0-9]{2}([[:space:]]*[AaPp][Mm])?([[:space:]]+[[:alpha:]]{2,5})?$ && "$epoch" -le "$now_epoch" ]]; then
+      epoch=$((epoch + 86400))
+    fi
+    printf '%s\n' "$epoch"
+    return 0
+  fi
+
+  echo ""
+  return 0
+}

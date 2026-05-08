@@ -54,19 +54,23 @@ init_summary() {
 ENDJSON
 }
 
-# record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues]
+# record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues] [rate_limit_sleep_seconds]
 #   Appends a lens result to the summary
 record_lens() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
+  local rate_limit_sleep_seconds="${7:-0}"
   local tmp="${file}.tmp"
   local lenses_increment=1
   if [[ "$status" == "skipped" ]]; then
     lenses_increment=0
   fi
+  if [[ ! "$rate_limit_sleep_seconds" =~ ^[0-9]+$ ]]; then
+    rate_limit_sleep_seconds=0
+  fi
   jq --arg d "$domain" --arg l "$lens_id" --argjson i "$iterations" --arg s "$status" \
-     --argjson iss "$issues" --argjson lr "$lenses_increment" \
-    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss}] |
+     --argjson iss "$issues" --argjson rlss "$rate_limit_sleep_seconds" --argjson lr "$lenses_increment" \
+    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss}] |
      .totals.lenses_run += $lr |
      .totals.iterations_total += $i |
      .totals.issues_created += $iss' "$file" > "$tmp" && mv "$tmp" "$file"
