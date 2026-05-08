@@ -156,6 +156,9 @@ Environment:
                            Open-source readiness default: 600.
   REPOLENS_AGENT_TIMEOUT_CONTENT
                            Content default: 600.
+  REPOLENS_AGENT_KILL_GRACE
+                           Seconds after an agent timeout to wait after SIGTERM
+                           before timeout(1) escalates to SIGKILL (default: 30).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
                            (default: 144000). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
@@ -408,6 +411,10 @@ case "$MODE" in
 esac
 
 AGENT_TIMEOUT_SECS="$(resolve_agent_timeout "$MODE")"
+AGENT_KILL_GRACE_SECS="$(resolve_agent_kill_grace)"
+if [[ ! "$AGENT_KILL_GRACE_SECS" =~ ^[0-9]+$ || "$AGENT_KILL_GRACE_SECS" -le 0 ]]; then
+  die "REPOLENS_AGENT_KILL_GRACE must be a positive integer number of seconds"
+fi
 
 # --- Validate --change requirement ---
 if [[ "$MODE" == "custom" && -z "$CHANGE_STATEMENT" ]]; then
@@ -719,6 +726,7 @@ log_info "RepoLens run $RUN_ID starting"
 log_info "Project: $PROJECT_PATH ($REPO_OWNER/$REPO_NAME)"
 log_info "Agent: $AGENT | Mode: $MODE | Parallel: $PARALLEL"
 log_info "Agent timeout: ${AGENT_TIMEOUT_SECS}s"
+log_info "Agent timeout kill grace: ${AGENT_KILL_GRACE_SECS}s"
 [[ -n "$SPEC_FILE" ]] && log_info "Spec: $SPEC_FILE"
 [[ -n "$MAX_ISSUES" ]] && log_info "Max issues: $MAX_ISSUES (DONE streak: 1)"
 [[ "$MODE" == "discover" ]] && log_info "Discover mode: single-pass brainstorming (DONE streak: 1)"
@@ -1274,9 +1282,11 @@ run_lens() {
     log_info "[$domain/$lens_id] Iteration $iteration"
 
     local agent_rc=0
-    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$AGENT_TIMEOUT_SECS" >"$output_file" 2>&1 || agent_rc=$?
+    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$AGENT_TIMEOUT_SECS" "$AGENT_KILL_GRACE_SECS" >"$output_file" 2>&1 || agent_rc=$?
     if [[ "$agent_rc" -eq 124 ]]; then
-      log_error "[$domain/$lens_id] agent timed out after ${AGENT_TIMEOUT_SECS}s on iteration $iteration"
+      log_error "[$domain/$lens_id] agent timed out after ${AGENT_TIMEOUT_SECS}s and exited during ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
+    elif [[ "$agent_rc" -eq 137 ]]; then
+      log_error "[$domain/$lens_id] agent timed out after ${AGENT_TIMEOUT_SECS}s and was hard-killed after ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
     elif [[ "$agent_rc" -ne 0 ]]; then
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
     fi

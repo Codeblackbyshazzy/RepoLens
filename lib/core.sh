@@ -85,7 +85,11 @@ resolve_agent_timeout() {
   agent_timeout_default_for_mode "$mode"
 }
 
-# Usage: run_agent <agent> <prompt> <project_path> [timeout_secs]
+resolve_agent_kill_grace() {
+  printf '%s\n' "${REPOLENS_AGENT_KILL_GRACE:-30}"
+}
+
+# Usage: run_agent <agent> <prompt> <project_path> [timeout_secs] [kill_grace_secs]
 #
 # Executes the given agent inside the target repository directory.
 # The work happens in a subshell so the caller's cwd is never affected.
@@ -95,8 +99,12 @@ run_agent() {
   local prompt="$2"
   local project_path="$3"
   local timeout_secs="${4:-${REPOLENS_AGENT_TIMEOUT:-600}}"
+  local kill_grace_secs="${5:-${REPOLENS_AGENT_KILL_GRACE:-30}}"
 
   [[ -d "$project_path" ]] || die "Project path does not exist: $project_path"
+  if [[ ! "$kill_grace_secs" =~ ^[0-9]+$ || "$kill_grace_secs" -le 0 ]]; then
+    die "REPOLENS_AGENT_KILL_GRACE must be a positive integer number of seconds"
+  fi
 
   (
     cd "$project_path" || die "Failed to cd into: $project_path"
@@ -108,20 +116,20 @@ run_agent() {
 
     case "$agent" in
       claude)
-        timeout "${timeout_secs}s" claude --dangerously-skip-permissions -p "$prompt"
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" claude --dangerously-skip-permissions -p "$prompt"
         ;;
       codex)
-        timeout "${timeout_secs}s" codex exec --yolo "$prompt"
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo "$prompt"
         ;;
       spark|sparc)
-        timeout "${timeout_secs}s" codex exec --yolo -m gpt-5.3-codex-spark -c reasoning_effort="xhigh" "$prompt"
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo -m gpt-5.3-codex-spark -c reasoning_effort="xhigh" "$prompt"
         ;;
       opencode)
-        timeout "${timeout_secs}s" opencode run "$prompt"
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" opencode run "$prompt"
         ;;
       opencode/*)
         local opencode_model="${agent#opencode/}"
-        timeout "${timeout_secs}s" opencode run -m "$opencode_model" "$prompt"
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" opencode run -m "$opencode_model" "$prompt"
         ;;
       *)
         die "Internal error: unsupported agent '$agent'"

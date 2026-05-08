@@ -25,6 +25,10 @@
 #   3. Deploy defaults longer than audit.
 #   4. The resolved value is what the orchestrator passes to timeout(1)
 #      and reports in timeout logs.
+#
+# Contract for issue #113:
+#   5. Agent timeout wrappers pass --kill-after=<grace>s to timeout(1).
+#   6. REPOLENS_AGENT_KILL_GRACE defaults to 30s and is configurable.
 
 set -uo pipefail
 
@@ -126,6 +130,7 @@ clear_timeout_env() {
   unset REPOLENS_AGENT_TIMEOUT_CUSTOM
   unset REPOLENS_AGENT_TIMEOUT_OPENSOURCE
   unset REPOLENS_AGENT_TIMEOUT_CONTENT
+  unset REPOLENS_AGENT_KILL_GRACE
 }
 
 resolve_timeout() {
@@ -134,6 +139,14 @@ resolve_timeout() {
     resolve_agent_timeout "$mode"
   else
     printf '%s\n' "__missing_resolve_agent_timeout__"
+  fi
+}
+
+resolve_kill_grace() {
+  if declare -F resolve_agent_kill_grace >/dev/null 2>&1; then
+    resolve_agent_kill_grace
+  else
+    printf '%s\n' "__missing_resolve_agent_kill_grace__"
   fi
 }
 
@@ -215,12 +228,26 @@ else
 fi
 
 echo ""
+echo "=== REPOLENS_AGENT_KILL_GRACE default and override ==="
+
+if assert_function_exists "lib/core.sh exposes resolve_agent_kill_grace" "resolve_agent_kill_grace"; then
+  clear_timeout_env
+  assert_eq "Default kill grace is 30s" "30" "$(resolve_kill_grace)"
+
+  clear_timeout_env
+  export REPOLENS_AGENT_KILL_GRACE=2
+  assert_eq "Kill grace override is honored" "2" "$(resolve_kill_grace)"
+else
+  echo "  SKIP: kill grace resolver waits for resolve_agent_kill_grace"
+fi
+
+echo ""
 echo "=== Timeout watchdog regressions ==="
 
 assert_count_at_least \
-  "lib/core.sh wraps each agent branch with timeout(1) (>=5 call sites)" \
+  "lib/core.sh wraps each agent branch with timeout(1) kill-after grace (>=5 call sites)" \
   "$CORE" \
-  '^[[:space:]]*timeout[[:space:]]+"[^"]*s"' \
+  '^[[:space:]]*timeout[[:space:]]+--kill-after="\$\{kill_grace_secs\}s"[[:space:]]+"\$\{timeout_secs\}s"' \
   5
 
 assert_match \
@@ -238,6 +265,11 @@ assert_match \
   "$REPO" \
   'agent timed out'
 
+assert_match \
+  "repolens.sh logs hard-killed timeouts distinctly" \
+  "$REPO" \
+  'hard-killed after'
+
 echo ""
 echo "=== README timeout documentation ==="
 
@@ -245,6 +277,21 @@ assert_match \
   "README documents the global timeout override" \
   "$README" \
   'REPOLENS_AGENT_TIMEOUT'
+
+assert_match \
+  "README documents the timeout kill grace override" \
+  "$README" \
+  'REPOLENS_AGENT_KILL_GRACE'
+
+assert_match \
+  "README documents the timeout kill grace default" \
+  "$README" \
+  'REPOLENS_AGENT_KILL_GRACE.*30|30.*REPOLENS_AGENT_KILL_GRACE'
+
+assert_match \
+  "repolens.sh usage documents the timeout kill grace override" \
+  "$REPO" \
+  'REPOLENS_AGENT_KILL_GRACE'
 
 for mode_var in \
   REPOLENS_AGENT_TIMEOUT_AUDIT \
@@ -300,8 +347,8 @@ else
 #!/usr/bin/env bash
 marker="${FAKE_TIMEOUT_MARKER:?marker path required}"
 calls="$(wc -l < "$marker" 2>/dev/null | tr -d ' ')"
-printf '%s\n' "$1" >> "$marker"
-shift
+printf '%s %s\n' "$1" "$2" >> "$marker"
+shift 2
 if (( calls == 0 )); then
   exit 124
 fi
@@ -322,6 +369,7 @@ SH
   PATH="$FAKE_BIN:$PATH" \
     FAKE_TIMEOUT_MARKER="$TIMEOUT_MARKER" \
     REPOLENS_AGENT_TIMEOUT_DEPLOY=2 \
+    REPOLENS_AGENT_KILL_GRACE=2 \
     bash "$REPO" \
       --project "$PROJECT" \
       --agent codex \
@@ -335,10 +383,11 @@ SH
   run_id="$(grep -oE 'RepoLens run [^ ]+ starting' "$OUT_FILE" | head -1 | awk '{print $3}')"
   RUN_ID="${run_id:-}"
 
-  first_timeout_arg="$(head -1 "$TIMEOUT_MARKER" 2>/dev/null || true)"
+  first_timeout_args="$(head -1 "$TIMEOUT_MARKER" 2>/dev/null || true)"
   log_contents="$(cat "$OUT_FILE")"
 
-  assert_eq "Deploy mode-specific timeout is passed to timeout(1)" "2s" "$first_timeout_arg"
+  assert_eq "Kill grace is passed to timeout(1)" "--kill-after=2s 2s" "$first_timeout_args"
+  assert_contains "Startup log includes configured kill grace" "Agent timeout kill grace: 2s" "$log_contents"
   assert_contains "Timeout log uses deploy mode-specific timeout" "agent timed out after 2s" "$log_contents"
 
   TOTAL=$((TOTAL + 1))
