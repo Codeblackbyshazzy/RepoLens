@@ -26,6 +26,7 @@
 _REPOLENS_CHILD_PIDS=()
 _REPOLENS_CHILD_LENS_IDS=()
 _REPOLENS_SEM_DIR=""
+_REPOLENS_SEM_OWNER=""
 _REPOLENS_MAX_PARALLEL=8
 _REPOLENS_CLEANUP_IN_PROGRESS=0
 _REPOLENS_CLEANUP_FORCE_KILL=0
@@ -36,11 +37,71 @@ _REPOLENS_CLEANUP_FORCE_KILL=0
 init_parallel() {
   local sem_dir="$1" max_parallel="${2:-8}"
   _REPOLENS_SEM_DIR="$sem_dir"
+  _REPOLENS_SEM_OWNER="${RUN_ID:-manual}:$$"
   _REPOLENS_MAX_PARALLEL="$max_parallel"
   _REPOLENS_CLEANUP_IN_PROGRESS=0
   _REPOLENS_CLEANUP_FORCE_KILL=0
   mkdir -p "$_REPOLENS_SEM_DIR"
+  _sem_gc_stale
   trap '_cleanup_children' INT TERM
+}
+
+# _sem_read_token <token_file> <pid_var> <owner_var>
+#   Parse current owner/pid metadata and legacy PID-only token files.
+_sem_read_token() {
+  local token_file="$1" pid_var="$2" owner_var="$3"
+  local line first_line parsed_pid="" parsed_owner=""
+
+  if [[ ! -s "$token_file" ]]; then
+    printf -v "$pid_var" '%s' ""
+    printf -v "$owner_var" '%s' ""
+    return 1
+  fi
+
+  IFS= read -r first_line < "$token_file" || first_line=""
+  if [[ "$first_line" =~ ^[0-9]+$ ]]; then
+    parsed_pid="$first_line"
+  else
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        pid=*) parsed_pid="${line#pid=}" ;;
+        owner=*) parsed_owner="${line#owner=}" ;;
+      esac
+    done < "$token_file"
+  fi
+
+  printf -v "$pid_var" '%s' "$parsed_pid"
+  printf -v "$owner_var" '%s' "$parsed_owner"
+  [[ "$parsed_pid" =~ ^[0-9]+$ ]]
+}
+
+# _sem_gc_stale
+#   Remove stale semaphore token files from a previous crashed run.
+_sem_gc_stale() {
+  local token pid owner
+
+  [[ -n "$_REPOLENS_SEM_DIR" && -d "$_REPOLENS_SEM_DIR" ]] || return 0
+
+  for token in "$_REPOLENS_SEM_DIR"/*.token; do
+    [[ -e "$token" ]] || continue
+
+    if ! _sem_read_token "$token" pid owner; then
+      rm -f "$token"
+      continue
+    fi
+
+    # PID liveness alone is vulnerable to reuse. New tokens carry the
+    # init_parallel owner, so foreign owners are stale even if their PID
+    # currently exists; legacy PID-only tokens fall back to kill -0.
+    if [[ -n "$owner" && "$owner" != "$_REPOLENS_SEM_OWNER" ]]; then
+      rm -f "$token"
+      continue
+    fi
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$token"
+    fi
+  done
 }
 
 # _cleanup_children
@@ -138,14 +199,34 @@ sem_acquire() {
     if [[ "$count" -lt "$_REPOLENS_MAX_PARALLEL" ]]; then
       break
     fi
+    _sem_gc_stale
+    count="$(find "$_REPOLENS_SEM_DIR" -maxdepth 1 -name '*.token' 2>/dev/null | wc -l)"
+    if [[ "$count" -lt "$_REPOLENS_MAX_PARALLEL" ]]; then
+      break
+    fi
     sleep 2
   done
 }
 
 # sem_token_create <lens_id>
-#   Touch a token file for this lens.
+#   Write a token file for this lens with owner and holder PID metadata.
 sem_token_create() {
-  touch "$_REPOLENS_SEM_DIR/${1}.token"
+  local lens_id="$1" token tmp
+
+  token="$_REPOLENS_SEM_DIR/${lens_id}.token"
+  tmp="$(mktemp "$_REPOLENS_SEM_DIR/.${lens_id}.token.XXXXXX")" || return 1
+  {
+    printf 'owner=%s\n' "${_REPOLENS_SEM_OWNER:-manual:$$}"
+    printf 'pid=%s\n' "$BASHPID"
+  } > "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+
+  mv -f "$tmp" "$token" || {
+    rm -f "$tmp"
+    return 1
+  }
 }
 
 # sem_token_remove <lens_id>
@@ -168,10 +249,11 @@ spawn_lens() {
   sem_token_create "$lens_id"
 
   (
+    sem_token_create "$lens_id"
     # EXIT trap fires on every bash-trappable exit path (clean return,
     # exit N, errexit, SIGTERM, SIGHUP, SIGINT) so the token is always
-    # released. SIGKILL / OOM still leak — see issue #117 for the
-    # startup-time stale-token GC that handles that case.
+    # released. SIGKILL / OOM still leak a token, but its recorded child
+    # PID lets startup-time GC remove it on resume.
     trap 'sem_token_remove "$lens_id"' EXIT
     "$callback" "$@"
   ) &
