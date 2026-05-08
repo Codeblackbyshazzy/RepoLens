@@ -1278,7 +1278,7 @@ run_lens() {
       issues_baseline="$_baseline_out"
     else
       issues_baseline=0
-      log_warn "[$domain/$lens_id] Could not establish issue baseline from the forge; assuming 0. Per-lens counts may be inflated if pre-existing issues carry label '$lens_label'."
+      log_warn "[$domain/$lens_id] Baseline forge issue count failed; using fallback baseline count 0. Per-lens counts may be inflated if pre-existing issues carry label '$lens_label'."
     fi
   fi
 
@@ -1372,27 +1372,25 @@ run_lens() {
     # Count issues created by this lens.
     # If forge_issue_list_count fails (rate-limited, auth expired, network
     # blip, repo gone, etc.) we MUST NOT treat that as "0 issues" — that
-    # was the original bug. Reuse prev_lens_issues so the counter stays
-    # monotonic and the summary doesn't lie about what the forge holds.
+    # was the original bug. Fall back to issue URLs emitted in this
+    # iteration's captured agent output; they are a best-effort per-iteration
+    # delta, not an authoritative forge total.
     local current_issue_count=""
-    local count_ok=true
     if $LOCAL_MODE; then
       current_issue_count="$(count_dry_run_issues "$lens_local_dir")"
     else
       if ! current_issue_count="$(forge_issue_list_count "$REPO_OWNER/$REPO_NAME" "$lens_label")"; then
-        count_ok=false
+        local fallback_issue_count
+        fallback_issue_count="$(count_issues_in_output "$output_file")"
+        log_warn "[$domain/$lens_id] Iteration $iteration: forge issue count failed; falling back to GitHub issue URLs in agent output ($fallback_issue_count issue(s) found)."
+        current_issue_count=$((issues_baseline + prev_lens_issues + fallback_issue_count))
       fi
     fi
-    if $count_ok; then
-      lens_issues=$((current_issue_count - issues_baseline))
-      [[ "$lens_issues" -lt 0 ]] && lens_issues=0
-      local iter_issues=$((lens_issues - prev_lens_issues))
-      [[ "$iter_issues" -gt 0 ]] && log_info "[$domain/$lens_id] $iter_issues issue(s) created this iteration ($lens_issues lens total)"
-      prev_lens_issues="$lens_issues"
-    else
-      log_warn "[$domain/$lens_id] Iteration $iteration: unable to query forge issue count; reusing previous count ($prev_lens_issues). Delta for this iteration is unknown."
-      lens_issues="$prev_lens_issues"
-    fi
+    lens_issues=$((current_issue_count - issues_baseline))
+    [[ "$lens_issues" -lt 0 ]] && lens_issues=0
+    local iter_issues=$((lens_issues - prev_lens_issues))
+    [[ "$iter_issues" -gt 0 ]] && log_info "[$domain/$lens_id] $iter_issues issue(s) created this iteration ($lens_issues lens total)"
+    prev_lens_issues="$lens_issues"
 
     # Check global issue budget
     if [[ -n "$MAX_ISSUES" ]]; then
