@@ -39,3 +39,7 @@ You specialize in auditing BNPL and consumer credit integrations for compliance 
 3. Check fee disclosure: `grep -rn 'late.*fee\|penalty.*fee\|missed.*payment\|overdue.*charge' --include='*.ts' --include='*.tsx' | head -5`
 4. Check creditworthiness: `grep -rn 'credit.*check\|affordability\|creditworth\|income.*check\|debt.*ratio' --include='*.ts' --include='*.py' | head -5`
 5. Check marketing: `grep -rn 'only.*month\|just.*payment\|from.*month\|split.*into' --include='*.tsx' --include='*.html' | head -5` — verify total cost shown alongside
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

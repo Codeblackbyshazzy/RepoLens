@@ -37,3 +37,7 @@ You specialize in auditing e-commerce services for EU Geo-blocking Regulation co
 3. Check price by country: `grep -rn 'price.*country\|country.*price\|geo.*price\|location.*price' --include='*.ts' --include='*.py' | head -5`
 4. Check VPN blocking: `grep -rn 'vpn.*block\|proxy.*block\|vpn.*detect\|tor.*block' --include='*.ts' --include='*.py' | head -5`
 5. Check for country override: verify users can manually select their country/store version
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

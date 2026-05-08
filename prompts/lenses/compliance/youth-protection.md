@@ -54,3 +54,7 @@ You specialize in auditing whether services accessible to minors implement prope
 4. Check for report mechanism: `grep -rn 'report\|flag\|abuse\|Report.*Button\|reportAbuse' --include='*.tsx' --include='*.vue' | head -10`
 5. Check for parental controls: `grep -rn 'parent.*consent\|parental\|guardian\|coppa\|COPPA\|minor\|child.*account' --include='*.ts' --include='*.py' | head -10`
 6. Check for block/mute: `grep -rn 'block.*user\|mute.*user\|blockUser\|muteUser' --include='*.ts' --include='*.tsx' | head -10`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

@@ -41,3 +41,7 @@ You specialize in auditing platform software for P2B Regulation compliance — r
 4. Check suspension logic: `grep -rn 'suspend.*seller\|deactivate.*merchant\|ban.*vendor\|restrict.*seller' --include='*.ts' --include='*.py' | head -5`
 5. Check complaint/appeal: `grep -rn 'appeal\|dispute\|complaint.*seller\|seller.*support' --include='*.ts' --include='*.tsx' | head -5`
 6. Check ToS notification: `grep -rn 'terms.*change\|tos.*update\|notify.*terms\|30.*day.*notice' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

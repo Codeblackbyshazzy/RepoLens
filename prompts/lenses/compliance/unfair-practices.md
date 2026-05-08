@@ -40,3 +40,7 @@ You specialize in detecting unfair commercial practices and dark patterns — de
 4. Check for drip pricing: compare what's shown on product page vs final checkout total
 5. Find free trial logic: `grep -rn 'free.*trial\|trial.*period\|auto.*convert\|trial.*end' --include='*.ts' --include='*.py' | head -10`
 6. Compare signup vs deletion flow complexity: count steps for each
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

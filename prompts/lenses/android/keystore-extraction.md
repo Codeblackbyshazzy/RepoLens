@@ -84,3 +84,7 @@ Use read-only static inspection first. Skip optional tools that are not installe
 - Redact full tokens, cookies, passwords, passphrases, keys, PII, payment data, health data, request/response bodies, database rows, preference values, backup contents, and file contents. Show only minimal prefixes, hashes, value classes, filenames, API names, and stack context needed to prove the issue.
 - Recommend concrete source-side remediation at `{{PROJECT_PATH}}`: generate sensitive keys inside AndroidKeyStore, require suitable user authentication, set biometric enrollment invalidation where appropriate, use hardware or StrongBox when justified, keep SQLCipher/Realm keys out of app-derivable material, remove plain `SharedPreferences` fallbacks, exclude secret stores from backups, and handle key invalidation with explicit re-authentication.
 - Include a read-only verification command or static search that a maintainer can run to confirm the fix without exposing secret values.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

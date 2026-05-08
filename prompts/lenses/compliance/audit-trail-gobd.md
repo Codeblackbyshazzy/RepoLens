@@ -62,3 +62,7 @@ You specialize in auditing whether commercial software maintains proper audit tr
 5. Check retention config: `grep -rn 'retention\|cleanup\|purge\|archive\|expire' --include='*.ts' --include='*.py' --include='*.yaml' --include='*.json' | head -10`
 6. Check for data export: `grep -rn 'export.*csv\|export.*pdf\|datev\|audit.*export\|tax.*report' --include='*.ts' --include='*.py' | head -10`
 7. Check migration files for financial table structure: look for created_at, updated_at, deleted_at, audit fields
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

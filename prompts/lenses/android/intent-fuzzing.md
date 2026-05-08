@@ -89,3 +89,7 @@ Use static APK inspection first to build a precise target inventory, then run ac
 - For provider issues, include authority/path, read permission state, method reached, disclosed data category after redaction, and why `content query` from an untrusted caller should not expose it.
 - For receiver spoofing, include action, receiver class, sender validation status, inert extra payload, observed behavior, and missing signature permission, caller UID/package validation, or action namespace control.
 - For intent redirection and `PendingIntent` issues, show caller-controlled source data, outbound sink, explicit-target or immutability gap, URI grant scope, and a safe remediation such as explicit components, allowlisted packages/actions/data, `FLAG_IMMUTABLE`, and strict extra validation.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

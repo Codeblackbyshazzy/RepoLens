@@ -59,3 +59,7 @@ You specialize in auditing AI systems for EU AI Act compliance — transparency 
 5. Check for decision logging: `grep -rn 'log.*prediction\|log.*decision\|audit.*ai\|model.*version\|confidence.*score' --include='*.py' --include='*.ts' | head -10`
 6. Check for human review: `grep -rn 'human.*review\|manual.*review\|appeal\|override\|human.*in.*loop' --include='*.py' --include='*.ts' | head -10`
 7. Check for watermarking/marking: `grep -rn 'watermark\|metadata.*ai\|content.*provenance\|C2PA\|Content.*Credentials' --include='*.py' --include='*.ts' | head -10`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

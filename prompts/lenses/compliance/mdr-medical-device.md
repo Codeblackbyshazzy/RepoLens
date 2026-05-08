@@ -58,3 +58,7 @@ You specialize in auditing Software as a Medical Device for EU MDR compliance â€
 4. Check for risk docs: `find . -name '*fmea*' -o -name '*hazard*' -o -name '*risk.*analysis*' -o -name '*threat.*model*' 2>/dev/null`
 5. Check SBOM: `find . -name 'sbom*' -o -name '*.spdx*' -o -name '*cyclonedx*' 2>/dev/null`
 6. Check for incident reporting: `grep -rn 'incident.*report\|vigilance\|adverse.*event\|safety.*report' --include='*.ts' --include='*.py' --include='*.md' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

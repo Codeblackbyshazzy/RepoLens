@@ -85,3 +85,7 @@ Use shell-safe runtime variables instead of copying rendered template paths into
 - Do not install plugins, run format-applying tasks, edit generated reports, mutate devices, install APKs, clear app data, or change Android settings.
 
 Reference: {{PROJECT_PATH}}.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

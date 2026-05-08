@@ -53,3 +53,7 @@ You specialize in auditing whether subscription-based services comply with the G
 5. Check for auto-renewal logic: `grep -rn 'autoRenew\|auto_renew\|nextBillingDate\|renewal' --include='*.ts' --include='*.py'`
 6. Check for cancellation confirmation: `grep -rn 'cancel.*confirm\|cancel.*email\|cancel.*notification' --include='*.ts' --include='*.py'`
 7. Check database for cancellation tracking: `grep -rn 'cancelledAt\|cancelled_at\|cancellation_date\|cancel.*status' --include='*.ts' --include='*.py' --include='*.sql'`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

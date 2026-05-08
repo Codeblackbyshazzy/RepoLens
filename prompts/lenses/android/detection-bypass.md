@@ -96,3 +96,7 @@ Use read-only static inspection first. Skip optional tools that are not installe
 - Redact tokens, cookies, passwords, keys, PII, payment data, health data, request/response bodies, file contents, certificates, and full attestation payloads.
 - Avoid duplicating `frida-runtime`, `ssl-pinning-mitm`, `manifest-audit`, `native-libraries`, or `secrets-in-apk` unless anti-tamper or detection robustness is the reason the finding exists.
 - Recommend concrete source-side remediation at `{{PROJECT_PATH}}`: layer independent root/debugger/emulator/hook signals, move enforcement server-side where appropriate, bind attestation to nonce and request context, verify app integrity beyond local branches, protect native and Java detection paths, repeat checks around sensitive actions, and obfuscate detection code enough to reduce trivial hook targeting.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

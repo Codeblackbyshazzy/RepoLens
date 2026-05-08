@@ -54,3 +54,7 @@ If the repository has no Terraform files, no Terraform module directories, and n
 5. Inspect `versions.tf` / `terraform` blocks for provider pinning and backend configuration.
 6. Compare README promises against what the HCL/module structure shows Terraform would produce. Reason statically by default; do not run `terraform init`, do not run `terraform plan`, do not perform provider downloads or module downloads, and do not use credentialed Terraform commands unless the run is explicitly sandboxed with no secrets and no network access.
 7. Look for `terraform.lock.hcl` — its absence means provider versions float between runs.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

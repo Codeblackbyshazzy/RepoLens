@@ -55,3 +55,7 @@ You specialize in auditing whether a project has a proper vulnerability disclosu
 5. Read SECURITY.md content if it exists — verify completeness
 6. Check for bug bounty platform integration: `grep -rn 'hackerone\|bugcrowd\|intigriti\|synack' --include='*.md' --include='*.json'`
 7. Check GitHub Security Advisories: look for `.github/SECURITY.md` and advisory references
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

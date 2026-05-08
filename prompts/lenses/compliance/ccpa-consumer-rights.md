@@ -54,3 +54,7 @@ You specialize in auditing software for CCPA/CPRA compliance — consumer rights
 4. Find opt-out: `grep -rn 'opt.*out\|do.*not.*sell\|dns\|gpc\|global.*privacy.*control' --include='*.ts' --include='*.tsx' --include='*.py' | head -10`
 5. Find third-party sharing: `grep -rn 'share.*data\|third.*party\|partner\|advertis\|analytics.*send' --include='*.ts' --include='*.py' | head -10`
 6. Check for "Do Not Sell" link: `grep -rn 'do.*not.*sell\|privacy.*choice\|opt.*out.*sale' --include='*.tsx' --include='*.vue' --include='*.html' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

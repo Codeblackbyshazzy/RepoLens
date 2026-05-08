@@ -101,3 +101,7 @@ Keep findings specific to network architecture, routing, subnet tiers, NAT, VPC 
 8. Flag any database or sensitive workload placed in a public subnet or attached to a security group that effectively exposes it publicly.
 9. Follow Terraform module variables and outputs, CloudFormation nested stack parameters, Pulumi component inputs, and CDK construct props before reporting; avoid false positives where topology is defined indirectly but clearly.
 10. Prefer concrete evidence from IaC definitions over assumptions from names alone. When a finding depends on inferred public/private subnet classification, explain the route-table or gateway evidence that supports the classification.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

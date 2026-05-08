@@ -39,3 +39,7 @@ You specialize in auditing pricing systems for personalized pricing transparency
 3. Check A/B testing on prices: `grep -rn 'ab.*test.*price\|experiment.*price\|variant.*price\|price.*test' --include='*.ts' --include='*.py' | head -5`
 4. Check for disclosure: `grep -rn 'personalized.*price\|price.*personalized\|dynamic.*pricing.*notice' --include='*.tsx' --include='*.vue' | head -5`
 5. Check for standard price: verify a base/reference price exists alongside personalized prices
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

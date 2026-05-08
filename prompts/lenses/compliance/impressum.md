@@ -55,3 +55,7 @@ You specialize in auditing whether a web project has a legally compliant Impress
 5. Read imprint content: verify all TMG §5 required fields are present
 6. Check sitemap: `grep -rn 'impressum\|imprint' --include='sitemap*' --include='*.xml'`
 7. Verify footer link on all pages: check layout/template components for consistent imprint link
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

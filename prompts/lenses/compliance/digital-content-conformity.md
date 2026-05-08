@@ -36,3 +36,7 @@ You specialize in auditing digital content and services for EU conformity requir
 2. Check update mechanism: `grep -rn 'update\|patch\|version.*check\|auto.*update\|security.*update' --include='*.ts' --include='*.py' | head -10`
 3. Check data portability: `grep -rn 'export.*data\|download.*data\|portability\|migrate' --include='*.ts' --include='*.py' | head -5`
 4. Check version tracking: `grep -rn 'version\|release.*note\|changelog' --include='*.ts' --include='*.json' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

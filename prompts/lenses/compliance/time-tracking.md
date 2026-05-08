@@ -39,3 +39,7 @@ You specialize in auditing time tracking systems for legal compliance — object
 3. Check rest period enforcement: `grep -rn 'rest.*period\|break.*time\|minimum.*rest\|11.*hour\|daily.*rest' --include='*.ts' --include='*.py' | head -5`
 4. Check overtime: `grep -rn 'overtime\|extra.*hour\|weekly.*max\|48.*hour\|max.*working' --include='*.ts' --include='*.py' | head -5`
 5. Check retention: `grep -rn 'retention\|time.*delete\|time.*archive\|purge.*time' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

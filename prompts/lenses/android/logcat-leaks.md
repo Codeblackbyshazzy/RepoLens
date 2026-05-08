@@ -81,3 +81,7 @@ Use static APK context only to identify likely tags, logging libraries, and rele
 - Never paste full secrets, tokens, passwords, card numbers, private keys, biometric values, or refresh tokens into an issue. Include the log tag, package/PID context, data type, timestamp, and a short fingerprint or prefix/suffix only.
 - Increase severity when release-build context shows `android:debuggable` is false yet sensitive values still appear in logcat, or when API <= 23 / `READ_LOGS` exposure meaningfully broadens who can observe the logs.
 - If no relevant package-correlated sensitive data appears, output DONE. Do not create generic "logs may leak" issues.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

@@ -58,3 +58,7 @@ You specialize in auditing e-commerce implementations for compliance with EU Con
 4. Find order confirmation template: `find . -path '*email*' -o -path '*template*' | xargs grep -l 'order\|confirmation\|receipt' 2>/dev/null | head -5`
 5. Check for pre-checked extras: `grep -rn 'checked.*default\|defaultChecked\|pre.*select' --include='*.tsx' --include='*.vue' | grep -v 'test' | head -10`
 6. Find delivery info: `grep -rn 'delivery.*date\|shipping.*time\|estimated.*delivery\|deliveryDate' --include='*.ts' --include='*.tsx' | head -10`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

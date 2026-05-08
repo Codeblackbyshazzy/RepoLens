@@ -40,3 +40,7 @@ You specialize in auditing educational software for student data protection — 
 3. Check parental consent: `grep -rn 'parent.*consent\|guardian.*consent\|parental\|minor\|coppa\|age.*check' --include='*.ts' --include='*.py' | head -5`
 4. Check analytics: `grep -rn 'analytics\|tracking\|learning.*analytics' --include='*.ts' --include='*.py' | head -10` — verify only educational purpose
 5. Check data export: `grep -rn 'export.*student\|export.*grade\|download.*transcript\|data.*portability' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

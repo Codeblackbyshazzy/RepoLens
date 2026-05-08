@@ -54,3 +54,7 @@ You specialize in auditing whether payment processing code follows PCI DSS princ
 4. Check payment logging: `grep -rn 'log.*payment\|log.*card\|log.*charge\|console.*payment' --include='*.ts' --include='*.py' | head -10`
 5. Check webhook verification: `grep -rn 'webhook.*signature\|stripe.*constructEvent\|verifyWebhook\|webhook.*secret' --include='*.ts' --include='*.py' | head -10`
 6. Check for HTTPS enforcement on payment routes and idempotency key usage
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

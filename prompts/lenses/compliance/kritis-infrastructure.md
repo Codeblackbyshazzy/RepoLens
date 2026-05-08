@@ -40,3 +40,7 @@ You specialize in auditing critical infrastructure software for KRITIS complianc
 3. Check incident reporting: `grep -rn 'incident.*report\|bsi.*report\|security.*incident\|breach.*notify' --include='*.ts' --include='*.py' --include='*.md' | head -10`
 4. Check network segmentation: `grep -rn 'segment\|vlan\|firewall.*rule\|network.*policy\|ot.*network\|it.*ot.*boundary' --include='*.tf' --include='*.yaml' | head -10`
 5. Check backup/DR: `grep -rn 'backup\|disaster.*recovery\|failover\|business.*continuity' --include='*.md' --include='*.yml' | head -10`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

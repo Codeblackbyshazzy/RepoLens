@@ -52,3 +52,7 @@ You specialize in auditing whether price displays comply with EU/German consumer
 4. Check shipping cost display: `grep -rn 'shipping\|delivery.*cost\|versand' --include='*.tsx' --include='*.vue' --include='*.ts' | head -10`
 5. Look for price formatting functions: `grep -rn 'formatPrice\|formatCurrency\|toFixed\|Intl\.NumberFormat' --include='*.ts' --include='*.tsx' | head -10`
 6. Check for discount logic: `grep -rn 'discount\|originalPrice\|salePrice\|strikethrough\|wasPrice' --include='*.ts' --include='*.tsx' | head -10`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

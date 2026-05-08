@@ -85,3 +85,7 @@ Use static APK inspection to map candidate components, then use drozer only when
 - For providers, include authority/path, read/write permission state, method reached, disclosed data category after redaction, SQL/path evidence, and the source-side fix: signature-level permissions, path permissions, caller validation, canonical path checks, parameterized queries, or removing the export.
 - For services and receivers, include the action/component, caller validation status, inert payload, observed behavior, and the fix: signature permission, explicit package allowlist, `Binder.getCallingUid()` validation, action namespace hardening, or removing public export.
 - For shared UID and backup findings, include drozer package output, manifest evidence, affected data or privilege boundary, and the fix: remove shared UID reliance, enforce per-caller checks, disable backup for sensitive data, or add backup exclusion rules.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

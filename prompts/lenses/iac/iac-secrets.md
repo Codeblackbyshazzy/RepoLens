@@ -67,3 +67,7 @@ Secret reporting guard: when creating issue evidence for this lens, redact every
 8. Look for secrets management integration; check for Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, external-secrets workflows, or equivalent data sources where secret-bearing resources are managed.
 9. Check for `.terraformrc`, `terraform.rc`, `credentials.json`, service account keys, or provider blocks with inline credentials.
 10. Keep findings IaC-specific. Avoid duplicating generic secret-scanning findings unless the evidence involves Terraform/OpenTofu state, variables, outputs, providers, backends, or CI invocation patterns.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

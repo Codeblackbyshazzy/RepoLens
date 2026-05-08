@@ -41,3 +41,7 @@ You specialize in auditing software for eIDAS 2.0 compliance — qualified elect
 4. Check certificate validation: `grep -rn 'verify.*cert\|validate.*cert\|check.*revoc\|ocsp\|crl' --include='*.ts' --include='*.py' | head -10`
 5. Check key management: `grep -rn 'hsm\|hardware.*security\|pkcs.*11\|key.*vault\|secure.*enclave' --include='*.ts' --include='*.py' | head -5`
 6. Check wallet integration: `grep -rn 'digital.*wallet\|identity.*wallet\|eu.*wallet\|eudiw' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

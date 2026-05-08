@@ -104,3 +104,7 @@ AWS examples are concrete because many IaC compliance controls are AWS-specific 
 9. Search for `aws_budgets_budget`, cost anomaly monitors, billing alerts, quota alerts, SNS topics, subscriptions, and alarm action references; verify the cost and operational alert path is complete.
 10. Verify automatic minor upgrades, preferred maintenance windows, managed-service maintenance settings, Container Insights, Performance Insights, log retention, cross-region replication, health checks, failover, RTO/RPO documentation, and disaster recovery runbooks for production-tier resources.
 11. Follow module variables, outputs, nested stacks, construct props, and shared locals before reporting. Prefer concrete IaC evidence over assumptions from names alone, and explain any inference chain that connects a resource to a missing compliance control.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

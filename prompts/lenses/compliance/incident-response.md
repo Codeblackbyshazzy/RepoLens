@@ -63,3 +63,7 @@ You specialize in auditing whether a production service has adequate logging, al
 5. Check for rate limiting: `grep -rn 'rateLimit\|rateLimiter\|throttle\|slowDown\|express-rate-limit' --include='*.ts' --include='*.py' --include='*.go' | head -10`
 6. Check for IR docs: `find . -name '*incident*' -o -name '*runbook*' -o -name '*postmortem*' -o -name '*breach*' 2>/dev/null | head -10`
 7. Check for session revocation: `grep -rn 'revokeSession\|revokeToken\|invalidateAll\|killSession\|logoutAll' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

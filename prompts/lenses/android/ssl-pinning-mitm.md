@@ -83,3 +83,7 @@ Use read-only static inspection first. Skip optional tools that are not installe
 - For signing and replay findings, include the signed fields, omitted mutable fields, nonce or timestamp behavior, and a safe replay proof or static code path. Do not include usable signatures or tokens.
 - For GraphQL introspection or backend exposure, show the affected endpoint and minimal schema/error evidence after redaction, then explain the production impact.
 - Recommend concrete source-side remediation at `{{PROJECT_PATH}}`: align pinning with every production endpoint and SDK client, remove release user CA trust, delete trust-all managers, wire pinners into the active client, protect WebView/native stacks consistently, include request body and freshness fields in signatures, disable production GraphQL introspection, and minimize sensitive telemetry.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

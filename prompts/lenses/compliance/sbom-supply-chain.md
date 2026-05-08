@@ -54,3 +54,7 @@ You specialize in auditing SBOM generation, dependency transparency, supply chai
 5. Check for license scanning: `grep -rn 'license.*check\|fossa\|license-checker\|cargo-deny\|license.*report' --include='*.yml' --include='*.yaml' --include='*.json' | head -10`
 6. Check for SBOM artifacts: `find . -name 'sbom*' -o -name '*.spdx*' -o -name '*cyclonedx*' -o -name '*bom.json' 2>/dev/null`
 7. Check for NOTICE/attribution: `ls -la NOTICE* ATTRIBUTION* LICENSES/ 2>/dev/null`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

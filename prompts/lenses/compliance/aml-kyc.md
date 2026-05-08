@@ -61,3 +61,7 @@ You specialize in auditing software for Anti-Money Laundering and Know Your Cust
 4. Find reporting: `grep -rn 'sar\|suspicious.*activity.*report\|fiu\|financial.*intelligence' --include='*.ts' --include='*.py' | head -5`
 5. Check risk scoring: `grep -rn 'risk.*score\|risk.*level\|customer.*risk\|aml.*risk' --include='*.ts' --include='*.py' | head -10`
 6. Check retention: `grep -rn 'retention\|kyc.*expir\|reverif\|re.*verification' --include='*.ts' --include='*.py' | head -5`
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

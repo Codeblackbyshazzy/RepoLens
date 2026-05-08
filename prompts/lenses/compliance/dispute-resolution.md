@@ -49,3 +49,7 @@ You specialize in auditing whether B2C services include the legally required lin
 4. Find support/contact pages: `grep -rn 'contact\|support\|complaint\|beschwerde' --include='*.tsx' --include='*.vue' --include='*.html' | head -10`
 5. Check for support ticket system: `grep -rn 'ticket\|support.*form\|complaint.*form' --include='*.ts' --include='*.tsx' | head -5`
 6. Verify ODR URL is correct and current: check that the link points to the active EU ODR platform
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

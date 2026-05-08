@@ -80,3 +80,7 @@ Reason statically by default: do not run `terraform init`, do not run `terraform
 10. For each ALB/NLB, verify `access_logs` block is present and enabled.
 11. Check ECS task definitions for `privileged` containers and excessive capabilities.
 12. Cross-reference security groups to ensure ingress and egress are managed in separate, clearly scoped resources.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

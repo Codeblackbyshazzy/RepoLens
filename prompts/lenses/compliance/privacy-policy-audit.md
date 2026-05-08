@@ -59,3 +59,7 @@ You specialize in auditing whether a project's privacy policy exists, is complet
 5. Read the privacy policy and compare against discovered data processing
 6. Check for data subject rights implementation: `grep -rn 'delete.*account\|export.*data\|data.*portability\|data.*access\|erasure' --include='*.ts' --include='*.py'`
 7. Check policy version/date: look for effective date, version number, last updated timestamp
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.

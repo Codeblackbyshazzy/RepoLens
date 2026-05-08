@@ -78,3 +78,7 @@ Use read-only static inspection first. Skip optional tools that are not installe
 - For IPC findings, name the service/binder/provider/broadcast path, caller validation that is missing, required permission if any, and the sensitive operation exposed.
 - For logging findings, include the log API or wrapper, data class, release reachability, and minimal redacted evidence. Redact full tokens, cookies, passwords, keys, PII, payment data, health data, request/response bodies, and file contents.
 - Recommend concrete source-side remediation at `{{PROJECT_PATH}}`: use authenticated encryption, remove weak digests from security decisions, raise KDF work factors, keep secrets in private scoped storage, enforce TLS validation and pinning in every active client, avoid command shells, validate IPC callers, remove hidden API reliance, and strip or gate sensitive release logs.
+
+### Termination
+
+After you have created all real GitHub issues for your confirmed findings (or if there are no findings to report), output **DONE** as the very first word of your response AND **DONE** as the very last word.
