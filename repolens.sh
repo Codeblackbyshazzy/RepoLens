@@ -80,6 +80,7 @@ show_about() {
 usage() {
   cat <<'EOF'
 Usage: repolens.sh --project <path> --agent <agent> [OPTIONS]
+       repolens.sh status [run-id] [OPTIONS]
 
 RepoLens — Multi-lens code audit tool. Runs expert analysis agents against
 any git repository and creates remote issues for real findings.
@@ -87,6 +88,9 @@ any git repository and creates remote issues for real findings.
 Required:
   --project <path|url>    Local path or remote Git URL (cloned read-only if URL)
   --agent <agent>         claude | codex | spark | sparc | opencode | opencode/<model>
+
+Commands:
+  status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
 
 Options:
   --mode <mode>           audit (default) | feature | bugfix | discover | deploy | custom | opensource | content
@@ -268,6 +272,13 @@ EOF
   echo ""
   printf "%s" "$content_output"
 }
+
+# Dispatch read-only subcommands before normal run validation.
+if [[ "${1:-}" == "status" ]]; then
+  shift
+  status_command "$@"
+  exit "$?"
+fi
 
 # --- Argument parsing ---
 PROJECT_PATH=""

@@ -1,0 +1,50 @@
+{
+  "run_id": "status-active-test",
+  "project": "/workspace/RepoLens",
+  "repo": "TheMorpheus407/RepoLens",
+  "mode": "audit",
+  "agent": "claude",
+  "parallel": true,
+  "max_parallel": 8,
+  "started_at": "2026-04-17T03:00:00Z",
+  "updated_at": "2026-04-17T07:27:00Z",
+  "state": "running",
+  "total_lenses": 152,
+  "counts": {
+    "queued": 120,
+    "active": 8,
+    "completed": 24,
+    "issues_created": 17
+  },
+  "completion_percentage": 15.79,
+  "active": [
+    {
+      "domain": "security",
+      "lens_id": "injection",
+      "pid": 12345,
+      "iteration": 3,
+      "started_at": "2026-04-17T07:22:37Z",
+      "last_heartbeat_at": "2026-04-17T07:26:48Z",
+      "age_seconds": 263,
+      "heartbeat_age_seconds": 12
+    },
+    {
+      "domain": "architecture",
+      "lens_id": "dead-code",
+      "pid": 12346,
+      "iteration": 2,
+      "started_at": "2026-04-17T07:24:09Z",
+      "last_heartbeat_at": "2026-04-17T07:26:45Z",
+      "age_seconds": 171,
+      "heartbeat_age_seconds": 15
+    }
+  ],
+  "queued": [
+    "security/xss",
+    "security/ssrf"
+  ],
+  "completed": [
+    "i18n/i18n-strings",
+    "frontend/a11y"
+  ]
+}

@@ -255,7 +255,14 @@ RepoLens supports 8 modes. Each mode controls which domains/lenses are visible a
 
 ```
 Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
+       repolens.sh status [run-id] [OPTIONS]
 ```
+
+### Commands
+
+| Command           | Description                                                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status [run-id]` | Show a live run snapshot from `logs/<run-id>/status.json`. If `run-id` is omitted, RepoLens selects the newest run that has a status file. Requires only `jq`. |
 
 ### Required Flags
 
@@ -374,11 +381,33 @@ Each run also writes a whole-run progress snapshot at:
 logs/<run-id>/status.json
 ```
 
-Inspect it from another terminal while a run is active:
+Show the newest run from another terminal while RepoLens is active:
 
 ```bash
-jq . logs/<run-id>/status.json
+./repolens.sh status
 ```
+
+Show a specific run by id:
+
+```bash
+./repolens.sh status 20260315T120000Z-a1b2c3d4
+```
+
+The status command prints run metadata, started/updated times, progress counters, and active lenses with running time and heartbeat age. Active lenses whose heartbeat age is greater than 120 seconds are marked `[STALE?]`; use `--stale-after <seconds>` to change that threshold. A missing run exits `1` and lists available runs. A non-watch render with stale active lenses exits `2`, which is useful for CI or external monitoring.
+
+Use raw JSON for scripts:
+
+```bash
+./repolens.sh status <run-id> --json
+```
+
+Refresh the terminal view until Ctrl-C:
+
+```bash
+./repolens.sh status <run-id> --watch 5 --no-color
+```
+
+Omit the watch interval to use the 5-second default. Use `--no-color` when piping output or capturing snapshots without ANSI color.
 
 `status.json` is refreshed atomically at `REPOLENS_STATUS_INTERVAL` seconds and is safe for humans, scripts, and monitoring tools to read while RepoLens is running. It includes run metadata, `state`, `total_lenses`, `completion_percentage`, aggregate `counts`, and the `active`, `queued`, and `completed` lens lists.
 
@@ -483,7 +512,7 @@ Completed lenses are skipped. The run ID is printed at startup and found in `log
 - **Local Markdown** — With `--local`, findings are written as individual markdown files to `<output-dir>/<domain>/<lens-id>/NNN-slug.md` with YAML frontmatter (title, severity, domain, lens, labels). Default output directory: `logs/<run-id>/issues/`
 - **Logs** — `logs/<run-id>/<domain>/<lens>/iteration-N-TIMESTAMP.txt`
 - **Heartbeats** — Active lenses write `logs/<run-id>/.heartbeat/<domain>__<lens-id>.json`; files are removed after clean lens completion and left behind if a worker exits abnormally
-- **Status** — `logs/<run-id>/status.json`, refreshed during the run with queued, active, completed, issue-count, completion-percentage, and final-state data
+- **Status** — `logs/<run-id>/status.json`, refreshed during the run with queued, active, completed, issue-count, completion-percentage, and final-state data; render it with `./repolens.sh status [run-id]`
 - **Summary** — `logs/<run-id>/summary.json`, including per-lens status, iterations, issue counts, and `rate_limit_sleep_seconds`
 
 ## Development

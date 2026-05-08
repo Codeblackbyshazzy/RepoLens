@@ -262,3 +262,414 @@ stop_status_updater() {
       "${PARALLEL:-}" "${MAX_PARALLEL:-}" "${STATUS_LENSES_FILE:-}" || true
   fi
 }
+
+status_cmd_usage() {
+  cat <<'EOF'
+Usage: repolens.sh status [run-id] [OPTIONS]
+
+Print a live RepoLens run snapshot from logs/<run-id>/status.json.
+
+Options:
+  --json                    Print status.json verbatim.
+  --watch [seconds]         Re-render every N seconds until interrupted (default: 5).
+  --stale-after <seconds>   Mark active lenses stale after this heartbeat age (default: 120).
+  --no-color                Suppress ANSI color.
+  -h, --help                Show status command help.
+EOF
+}
+
+status_format_duration() {
+  local seconds="${1:-0}"
+  local days hours minutes remainder
+
+  if [[ ! "$seconds" =~ ^-?[0-9]+$ ]]; then
+    seconds=0
+  fi
+  if (( seconds < 0 )); then
+    seconds=0
+  fi
+
+  days=$((seconds / 86400))
+  hours=$(((seconds % 86400) / 3600))
+  minutes=$(((seconds % 3600) / 60))
+  remainder=$((seconds % 60))
+
+  if (( days > 0 )); then
+    printf '%dd %dh' "$days" "$hours"
+  elif (( hours > 0 )); then
+    printf '%dh %02dm' "$hours" "$minutes"
+  elif (( minutes > 0 )); then
+    printf '%dm %02ds' "$minutes" "$remainder"
+  else
+    printf '%ds' "$remainder"
+  fi
+}
+
+status_format_iso_utc() {
+  local timestamp="${1:-}"
+
+  if [[ "$timestamp" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$ ]]; then
+    printf '%s-%s-%s %s:%s:%s UTC' \
+      "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+      "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+  elif [[ -n "$timestamp" ]]; then
+    printf '%s' "$timestamp"
+  else
+    printf 'unknown'
+  fi
+}
+
+status_relative_from_iso() {
+  local timestamp="${1:-}"
+  local seconds
+
+  seconds="$(jq -nr --arg ts "$timestamp" '
+    ($ts | fromdateiso8601? // empty) as $epoch
+    | if $epoch == "" then empty else ((now - $epoch) | floor) end
+  ' 2>/dev/null || true)"
+
+  if [[ ! "$seconds" =~ ^-?[0-9]+$ ]]; then
+    printf 'unknown'
+    return
+  fi
+  status_format_duration "$seconds"
+}
+
+status_truncate() {
+  local value="$1" max_length="$2"
+
+  if (( ${#value} <= max_length )); then
+    printf '%s' "$value"
+  elif (( max_length > 3 )); then
+    printf '%s...' "${value:0:max_length - 3}"
+  else
+    printf '%s' "${value:0:max_length}"
+  fi
+}
+
+status_sanitize_display() {
+  local value="${1:-}"
+
+  if command -v jq >/dev/null 2>&1; then
+    jq -Rrsr 'gsub("[\u0000-\u001f\u007f-\u009f]"; "")' <<< "$value" 2>/dev/null && return
+  fi
+
+  LC_ALL=C printf '%s' "$value" | tr -d '[:cntrl:]'
+}
+
+status_available_runs() {
+  local limit="${1:-10}"
+  local logs_dir="${SCRIPT_DIR:-.}/logs"
+  local dir count=0
+
+  [[ -d "$logs_dir" ]] || return 0
+
+  for dir in "$logs_dir"/*; do
+    [[ -d "$dir" && -f "$dir/status.json" ]] || continue
+    printf '%s\n' "$(status_sanitize_display "${dir##*/}")"
+    count=$((count + 1))
+    if (( count >= limit )); then
+      break
+    fi
+  done
+}
+
+status_print_available_runs() {
+  local runs=()
+  local run
+
+  mapfile -t runs < <(status_available_runs 10)
+  if (( ${#runs[@]} == 0 )); then
+    printf 'Available runs: none\n' >&2
+    return
+  fi
+
+  printf 'Available runs:\n' >&2
+  for run in "${runs[@]}"; do
+    printf '  %s\n' "$(status_sanitize_display "$run")" >&2
+  done
+}
+
+status_latest_file() {
+  local logs_dir="${SCRIPT_DIR:-.}/logs"
+  local dir status_file newest_file=""
+
+  [[ -d "$logs_dir" ]] || return 1
+
+  for dir in "$logs_dir"/*; do
+    status_file="$dir/status.json"
+    [[ -d "$dir" && -f "$status_file" ]] || continue
+    if [[ -z "$newest_file" || "$status_file" -nt "$newest_file" ]]; then
+      newest_file="$status_file"
+    fi
+  done
+
+  [[ -n "$newest_file" ]] || return 1
+  printf '%s\n' "$newest_file"
+}
+
+status_resolve_file() {
+  local run_id="${1:-}"
+  local logs_dir="${SCRIPT_DIR:-.}/logs"
+  local status_file
+
+  if [[ -n "$run_id" ]]; then
+    if [[ "$run_id" == *"/"* || "$run_id" == "." || "$run_id" == ".." ]]; then
+      printf "Invalid run id '%s'. Run ids must be direct logs/ children.\n" "$(status_sanitize_display "$run_id")" >&2
+      status_print_available_runs
+      return 1
+    fi
+
+    status_file="$logs_dir/$run_id/status.json"
+    if [[ ! -f "$status_file" ]]; then
+      printf "No status.json for run '%s'.\n" "$(status_sanitize_display "$run_id")" >&2
+      status_print_available_runs
+      return 1
+    fi
+
+    printf '%s\n' "$status_file"
+    return 0
+  fi
+
+  if ! status_file="$(status_latest_file)"; then
+    printf 'No RepoLens status files found under logs/.\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$status_file"
+}
+
+status_validate_json() {
+  local status_file="$1"
+
+  if ! jq -e 'type == "object"' "$status_file" >/dev/null 2>&1; then
+    printf 'Invalid status.json: %s\n' "$(status_sanitize_display "$status_file")" >&2
+    return 1
+  fi
+}
+
+status_any_stale() {
+  local status_file="$1" stale_after="$2"
+
+  jq -e --argjson stale_after "$stale_after" '
+    def number_value:
+      if type == "number" then .
+      elif type == "string" then (tonumber? // 0)
+      else 0
+      end;
+    any(.active[]?; ((.heartbeat_age_seconds // 0) | number_value) > $stale_after)
+  ' "$status_file" >/dev/null 2>&1
+}
+
+status_render_human() {
+  local status_file="$1" stale_after="$2" use_color="$3"
+  local meta=()
+  local run_id project repo mode agent parallel max_parallel started_at updated_at total_lenses
+  local completed_count active_count queued_count issues_created project_display parallel_display
+  local stale_red color_reset
+  local rows=()
+  local row lens_key iteration age_seconds heartbeat_age_seconds lens_display marker
+
+  mapfile -t meta < <(jq -r '
+    (.run_id // ""),
+    (.project // ""),
+    (.repo // ""),
+    (.mode // ""),
+    (.agent // ""),
+    ((.parallel // false) | tostring),
+    ((.max_parallel // 0) | tostring),
+    (.started_at // ""),
+    (.updated_at // ""),
+    ((.total_lenses // 0) | tostring),
+    ((.counts.completed // 0) | tostring),
+    ((.counts.active // 0) | tostring),
+    ((.counts.queued // 0) | tostring),
+    ((.counts.issues_created // 0) | tostring)
+  ' "$status_file") || return 1
+
+  if (( ${#meta[@]} < 14 )); then
+    printf 'Invalid status.json: missing expected fields in %s\n' "$(status_sanitize_display "$status_file")" >&2
+    return 1
+  fi
+
+  run_id="$(status_sanitize_display "${meta[0]}")"
+  project="$(status_sanitize_display "${meta[1]}")"
+  repo="$(status_sanitize_display "${meta[2]}")"
+  mode="$(status_sanitize_display "${meta[3]}")"
+  agent="$(status_sanitize_display "${meta[4]}")"
+  parallel="$(status_sanitize_display "${meta[5]}")"
+  max_parallel="$(status_sanitize_display "${meta[6]}")"
+  started_at="$(status_sanitize_display "${meta[7]}")"
+  updated_at="$(status_sanitize_display "${meta[8]}")"
+  total_lenses="$(status_sanitize_display "${meta[9]}")"
+  completed_count="$(status_sanitize_display "${meta[10]}")"
+  active_count="$(status_sanitize_display "${meta[11]}")"
+  queued_count="$(status_sanitize_display "${meta[12]}")"
+  issues_created="$(status_sanitize_display "${meta[13]}")"
+
+  project_display="$repo"
+  [[ -n "$project_display" ]] || project_display="$project"
+  [[ -n "$project_display" ]] || project_display="unknown"
+
+  if [[ "$parallel" == "true" ]]; then
+    if [[ "$max_parallel" =~ ^[0-9]+$ && "$max_parallel" -gt 0 ]]; then
+      parallel_display="parallel x$max_parallel"
+    else
+      parallel_display="parallel"
+    fi
+  else
+    parallel_display="sequential"
+  fi
+
+  stale_red=""
+  color_reset=""
+  if [[ "$use_color" == "true" ]]; then
+    stale_red=$'\033[31m'
+    color_reset=$'\033[0m'
+  fi
+
+  printf 'RepoLens run %s\n' "${run_id:-unknown}"
+  printf '  project:   %s  (%s, %s, %s)\n' "$project_display" "${mode:-unknown}" "${agent:-unknown}" "$parallel_display"
+  printf '  started:   %s  (%s ago)\n' "$(status_format_iso_utc "$started_at")" "$(status_relative_from_iso "$started_at")"
+  printf '  updated:   %s  (%s ago)\n' "$(status_format_iso_utc "$updated_at")" "$(status_relative_from_iso "$updated_at")"
+  printf '  progress:  %s/%s completed  |  %s active  |  %s queued  |  %s issues created\n' \
+    "$completed_count" "$total_lenses" "$active_count" "$queued_count" "$issues_created"
+  printf '\n'
+  printf 'Active lenses:\n'
+
+  mapfile -t rows < <(jq -r '
+    def number_value:
+      if type == "number" then .
+      elif type == "string" then (tonumber? // 0)
+      else 0
+      end;
+    .active[]?
+    | [
+        (((.domain // "") | tostring) + "/" + ((.lens_id // "") | tostring)),
+        (((.iteration // 0) | number_value) | tostring),
+        (((.age_seconds // 0) | number_value | floor) | tostring),
+        (((.heartbeat_age_seconds // 0) | number_value | floor) | tostring)
+      ]
+    | @tsv
+  ' "$status_file") || return 1
+
+  if (( ${#rows[@]} == 0 )); then
+    printf '  No active lenses.\n'
+    return 0
+  fi
+
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r lens_key iteration age_seconds heartbeat_age_seconds <<< "$row"
+    lens_key="$(status_sanitize_display "$lens_key")"
+    iteration="$(status_sanitize_display "$iteration")"
+    age_seconds="$(status_sanitize_display "$age_seconds")"
+    heartbeat_age_seconds="$(status_sanitize_display "$heartbeat_age_seconds")"
+    lens_display="$(status_truncate "$lens_key" 26)"
+    marker=""
+    if [[ "$heartbeat_age_seconds" =~ ^[0-9]+$ && "$heartbeat_age_seconds" -gt "$stale_after" ]]; then
+      marker="   ${stale_red}[STALE?]${color_reset}"
+    fi
+    printf '  %-26s  iter %-3s running %s   hb %s ago%s\n' \
+      "$lens_display" "${iteration:-0}" "$(status_format_duration "${age_seconds:-0}")" \
+      "$(status_format_duration "${heartbeat_age_seconds:-0}")" "$marker"
+  done
+}
+
+status_render_once() {
+  local status_file="$1" raw_json="$2" stale_after="$3" use_color="$4"
+
+  status_validate_json "$status_file" || return 1
+
+  if [[ "$raw_json" == "true" ]]; then
+    cat "$status_file" || return 1
+  else
+    status_render_human "$status_file" "$stale_after" "$use_color" || return 1
+  fi
+
+  if status_any_stale "$status_file" "$stale_after"; then
+    return 2
+  fi
+  return 0
+}
+
+status_command() {
+  local run_id="" raw_json=false watch=false watch_interval=5 stale_after=120 no_color=false
+  local status_file use_color=false rc
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        raw_json=true
+        shift
+        ;;
+      --watch)
+        watch=true
+        shift
+        if [[ $# -gt 0 && "$1" != --* && "$1" =~ ^[0-9]+$ ]]; then
+          watch_interval=$((10#$1))
+          shift
+        fi
+        if (( watch_interval <= 0 )); then
+          printf 'Invalid --watch interval: must be a positive integer.\n' >&2
+          return 1
+        fi
+        ;;
+      --stale-after)
+        if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+          printf 'Invalid --stale-after: must be a non-negative integer.\n' >&2
+          return 1
+        fi
+        stale_after=$((10#$2))
+        shift 2
+        ;;
+      --no-color)
+        no_color=true
+        shift
+        ;;
+      -h|--help)
+        status_cmd_usage
+        return 0
+        ;;
+      --*)
+        printf 'Unknown status option: %s\n' "$(status_sanitize_display "$1")" >&2
+        status_cmd_usage >&2
+        return 1
+        ;;
+      *)
+        if [[ -n "$run_id" ]]; then
+          printf 'Unexpected status argument: %s\n' "$(status_sanitize_display "$1")" >&2
+          status_cmd_usage >&2
+          return 1
+        fi
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if ! command -v jq >/dev/null 2>&1; then
+    printf 'ERROR: status requires jq to read status.json.\n' >&2
+    return 1
+  fi
+
+  status_file="$(status_resolve_file "$run_id")" || return 1
+
+  if [[ "$no_color" == "false" && -t 1 ]]; then
+    use_color=true
+  fi
+
+  if [[ "$watch" == "true" ]]; then
+    trap 'printf "\n"; exit 0' INT
+    trap 'exit 0' TERM
+    while true; do
+      status_render_once "$status_file" "$raw_json" "$stale_after" "$use_color"
+      rc=$?
+      if (( rc == 1 )); then
+        return 1
+      fi
+      printf '\n'
+      sleep "$watch_interval" || return 0
+    done
+  fi
+
+  status_render_once "$status_file" "$raw_json" "$stale_after" "$use_color"
+}
