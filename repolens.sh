@@ -105,6 +105,8 @@ Options:
   --resume <run-id>       Resume a previous interrupted run
   --spec <file>           Spec/PRD/roadmap to guide analysis (any text file)
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
+  --depth <n>             DONE streak depth per lens. Defaults: 3 for audit/feature/bugfix,
+                           1 otherwise. Must be between 1 and 19.
   --local                 Write findings as local markdown files instead of creating remote issues
   --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --forge <provider>      gh (GitHub) | tea (Gitea) | fj (Forgejo/Codeberg) — overrides auto-detection from origin
@@ -178,6 +180,8 @@ Environment:
                            with the remaining children. Should be >=
                            MAX_ITERATIONS_PER_LENS * resolved agent timeout plus
                            a buffer for rate-limit sleep and non-agent I/O.
+  DONE_STREAK_REQUIRED     DEPRECATED alias for --depth. Used only when --depth
+                           is unset; must be between 1 and 19.
   REPOLENS_HEARTBEAT_INTERVAL
                            Per-lens heartbeat file interval in seconds
                            (default: 15), and parallel-worker log heartbeat
@@ -294,6 +298,8 @@ MAX_PARALLEL=8
 RESUME_RUN_ID=""
 SPEC_FILE=""
 MAX_ISSUES=""
+DEPTH=""
+DEPTH_SET=false
 CHANGE_STATEMENT=""
 SOURCE_FILE=""
 LOGS_PATH=""
@@ -358,6 +364,12 @@ while [[ $# -gt 0 ]]; do
     --max-issues)
       [[ $# -ge 2 ]] || die "Option --max-issues requires a positive integer argument."
       MAX_ISSUES="$2"
+      shift 2
+      ;;
+    --depth)
+      [[ $# -ge 2 ]] || die "Option --depth requires a positive integer argument."
+      DEPTH="$2"
+      DEPTH_SET=true
       shift 2
       ;;
     --change)
@@ -658,6 +670,7 @@ if [[ -n "$MAX_COST" ]]; then
 fi
 
 # --- Derive DONE streak threshold ---
+DONE_STREAK_REQUIRED_ENV="${DONE_STREAK_REQUIRED:-}"
 DONE_STREAK_REQUIRED="$(mode_default_depth "$MODE")"
 if [[ -n "$MAX_ISSUES" ]]; then
   DONE_STREAK_REQUIRED=1
@@ -665,6 +678,25 @@ fi
 
 # --- Safety cap: maximum iterations per lens ---
 MAX_ITERATIONS_PER_LENS=20
+
+validate_done_depth() {
+  local source="$1"
+  local value="$2"
+  local max_depth=$((MAX_ITERATIONS_PER_LENS - 1))
+
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]] || (( value >= MAX_ITERATIONS_PER_LENS )); then
+    die "$source must be between 1 and $max_depth (exclusive of MAX_ITERATIONS_PER_LENS=$MAX_ITERATIONS_PER_LENS), got: $value"
+  fi
+}
+
+if $DEPTH_SET; then
+  validate_done_depth "--depth" "$DEPTH"
+  DONE_STREAK_REQUIRED="$DEPTH"
+elif [[ -n "$DONE_STREAK_REQUIRED_ENV" ]]; then
+  validate_done_depth "DONE_STREAK_REQUIRED" "$DONE_STREAK_REQUIRED_ENV"
+  log_warn "DONE_STREAK_REQUIRED is deprecated; use --depth N instead"
+  DONE_STREAK_REQUIRED="$DONE_STREAK_REQUIRED_ENV"
+fi
 
 # --- Derive repo metadata ---
 REPO_NAME="$(basename "$PROJECT_PATH")"
