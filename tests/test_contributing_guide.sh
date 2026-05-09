@@ -615,7 +615,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
   default_domains_in_json="$(jq -r '.domains[] | select(.mode == null or .mode == "") | .id' "$DOMAINS_FILE" | sort)"
   all_pass=true
   while IFS= read -r domain_id; do
-    if ! echo "$contributing_content" | grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|"; then
+    if ! grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|" <<< "$contributing_content"; then
       echo "  MISSING in CONTRIBUTING.md: $domain_id"
       all_pass=false
     fi
@@ -671,7 +671,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
   mode_ok=true
   while IFS=: read -r domain_id _count mode; do
     if [[ "$mode" != "default" ]]; then
-      if ! echo "$contributing_content" | grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|.*\`${mode}\`"; then
+      if ! grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|.*\`${mode}\`" <<< "$contributing_content"; then
         echo "  MISSING mode value: $domain_id should show mode=$mode"
         mode_ok=false
       fi
@@ -706,7 +706,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
       echo "  WRONG TABLE: $domain_id has no mode field but appears in Mode-Specific section"
       placement_ok=false
     fi
-    if ! echo "$default_section" | grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|"; then
+    if ! grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|" <<< "$default_section"; then
       echo "  MISSING: $domain_id has no mode field but is missing from Default-Mode section"
       placement_ok=false
     fi
@@ -716,7 +716,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
       echo "  WRONG TABLE: $domain_id has mode field but appears in Default-Mode section"
       placement_ok=false
     fi
-    if ! echo "$mode_specific_section" | grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|"; then
+    if ! grep -qE "^\|?[[:space:]]*${domain_id}[[:space:]]*\|" <<< "$mode_specific_section"; then
       echo "  MISSING: $domain_id has mode field but is missing from Mode-Specific section"
       placement_ok=false
     fi
@@ -741,11 +741,11 @@ if [[ -f "$DOMAINS_FILE" ]]; then
   actual_default="$(jq '[.domains[] | select(.mode == null or .mode == "")] | length' "$DOMAINS_FILE")"
   actual_mode="$(jq '[.domains[] | select(.mode != null and .mode != "")] | length' "$DOMAINS_FILE")"
   heading_count_ok=true
-  if ! echo "$contributing_content" | grep -qE "### Default-Mode Domains \(${actual_default}\)"; then
+  if ! grep -qE "### Default-Mode Domains \(${actual_default}\)" <<< "$contributing_content"; then
     echo "  MISMATCH: Default-Mode heading count should be $actual_default"
     heading_count_ok=false
   fi
-  if ! echo "$contributing_content" | grep -qE "### Mode-Specific Domains \(${actual_mode}\)"; then
+  if ! grep -qE "### Mode-Specific Domains \(${actual_mode}\)" <<< "$contributing_content"; then
     echo "  MISMATCH: Mode-Specific heading count should be $actual_mode"
     heading_count_ok=false
   fi
@@ -835,7 +835,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
     if [[ "$lens_id" == "your-new-lens-id" ]]; then
       continue
     fi
-    if ! echo "$all_lenses_in_json" | grep -qxF "$lens_id"; then
+    if ! grep -qxF "$lens_id" <<< "$all_lenses_in_json"; then
       echo "  INVALID: JSON snippet lens '$lens_id' not found in domains.json"
       snippet_ok=false
     fi
@@ -981,7 +981,7 @@ echo "Test 94: Quick Start covers all 6 essential steps"
 quickstart_section="$(echo "$contributing_content" | sed -n '/## Quick Start/,/^## /p')"
 qs_ok=true
 for step_keyword in "domain" "prompts/lenses/" "frontmatter" "domains.json" "make check" "pull request"; do
-  if ! echo "$quickstart_section" | grep -qi "$step_keyword"; then
+  if ! grep -qi "$step_keyword" <<< "$quickstart_section"; then
     echo "  MISSING step keyword: $step_keyword"
     qs_ok=false
   fi
@@ -1009,7 +1009,7 @@ heading_anchors="$(echo "$contributing_content" | grep -E '^#{1,4}[[:space:]]+' 
   tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9 -]//g' | sed 's/  */ /g' | sed 's/ /-/g')"
 anchors_ok=true
 while IFS= read -r anchor; do
-  if ! echo "$heading_anchors" | grep -qxF "$anchor"; then
+  if ! grep -qxF "$anchor" <<< "$heading_anchors"; then
     echo "  BROKEN ANCHOR: #$anchor does not resolve to a heading"
     anchors_ok=false
   fi
@@ -1042,13 +1042,13 @@ if [[ -f "$DOMAINS_FILE" && -n "${snippet_domain_id:-}" ]]; then
   snippet_lenses="$(echo "$contributing_content" | sed -n '/```json/,/```/p' | grep -oE '"([a-z]+-[a-z-]+)"' | tr -d '"' | grep -v 'your-new-lens-id')"
   all_present=true
   while IFS= read -r lens; do
-    if ! echo "$actual_lenses" | grep -qxF "$lens"; then
+    if ! grep -qxF "$lens" <<< "$actual_lenses"; then
       echo "  NOT IN DOMAIN: $lens is in snippet but not in $snippet_domain_id lenses"
       all_present=false
     fi
   done <<< "$snippet_lenses"
   while IFS= read -r lens; do
-    if ! echo "$snippet_lenses" | grep -qxF "$lens"; then
+    if ! grep -qxF "$lens" <<< "$snippet_lenses"; then
       echo "  MISSING FROM SNIPPET: $lens is in $snippet_domain_id but not in JSON snippet"
       all_present=false
     fi
