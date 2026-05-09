@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #130: logs/error-storms lens registration and prompt contract.
+# Tests for issue #134: logs/log-gaps lens registration and prompt contract.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LENS_FILE="$SCRIPT_DIR/prompts/lenses/logs/error-storms.md"
+LENS_FILE="$SCRIPT_DIR/prompts/lenses/logs/log-gaps.md"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 
 PASS=0
@@ -90,10 +90,10 @@ mode_lenses() {
 }
 
 echo ""
-echo "=== Test Suite: logs/error-storms lens (issue #130) ==="
+echo "=== Test Suite: logs/log-gaps lens (issue #134) ==="
 echo ""
 
-assert_file_exists "error-storms lens prompt exists" "$LENS_FILE"
+assert_file_exists "log-gaps lens prompt exists" "$LENS_FILE"
 
 lens_content=""
 if [[ -f "$LENS_FILE" ]]; then
@@ -104,10 +104,10 @@ echo ""
 echo "Test 1: frontmatter is exact"
 frontmatter="$(sed -n '1,6p' "$LENS_FILE" 2>/dev/null)"
 expected_frontmatter="---
-id: error-storms
+id: log-gaps
 domain: logs
-name: Error Storm Detector
-role: Error Pattern Analyst
+name: Log Gap Detector
+role: Volume Anomaly Analyst
 ---"
 assert_eq "frontmatter matches issue contract" "$expected_frontmatter" "$frontmatter"
 
@@ -128,109 +128,79 @@ echo ""
 echo "Test 3: logs domain registration is audit-visible"
 logs_lenses="$(jq -r '.domains[] | select(.id == "logs") | .lenses | join(",")' "$DOMAINS_FILE")"
 logs_mode="$(jq -r '.domains[] | select(.id == "logs") | .mode // "null"' "$DOMAINS_FILE")"
-assert_eq "logs domain registers logs lenses" "error-storms,error-cascades,retry-loops,recursive-growth,log-gaps" "$logs_lenses"
+assert_eq "logs domain registers expected lenses" "error-storms,error-cascades,retry-loops,recursive-growth,log-gaps" "$logs_lenses"
 assert_eq "logs domain stays mode-less" "null" "$logs_mode"
 audit_lenses="$(mode_lenses audit)"
-assert_contains "audit mode includes logs/error-storms" "logs/error-storms" "$audit_lenses"
+assert_contains "audit mode includes logs/log-gaps" "logs/log-gaps" "$audit_lenses"
 
 for mode in discover deploy opensource content; do
   lenses="$(mode_lenses "$mode")"
-  assert_not_contains "$mode mode excludes logs/error-storms" "logs/error-storms" "$lenses"
+  assert_not_contains "$mode mode excludes logs/log-gaps" "logs/log-gaps" "$lenses"
 done
 
 echo ""
-echo "Test 4: prompt uses generic LOGS_PATH input"
+echo "Test 4: prompt scope and sections match the issue"
+assert_contains "has expert focus section" "## Your Expert Focus" "$lens_content"
+assert_contains "has hunt section" "### What You Hunt For" "$lens_content"
+assert_contains "has investigation section" "### How You Investigate" "$lens_content"
+assert_contains "has evidence section" "### Evidence Required" "$lens_content"
+assert_contains "has exclusions section" "### What This Lens Does NOT File" "$lens_content"
 assert_contains "uses LOGS_PATH variable" '{{LOGS_PATH}}' "$lens_content"
-assert_not_contains "does not prescribe journalctl" "journalctl" "$lens_content"
-assert_not_contains "does not prescribe /var/log" "/var/log" "$lens_content"
 assert_contains "accepts single file" "single file" "$lens_content"
 assert_contains "accepts directory" "directory" "$lens_content"
+assert_contains "focuses on aggregate silence" "aggregate silence" "$lens_content"
 
 echo ""
-echo "Test 5: prompt covers required storm categories"
+echo "Test 5: prompt covers required gap categories"
 for term in \
-  "Identical-Fingerprint Storms" \
-  "Near-Duplicate Clusters with Rotating Identifiers" \
-  "Time-Window Bursts" \
-  "Sustained Low-Rate Noise That Adds Up" \
-  "Storm-Then-Silence Patterns"; do
+  "Volume Cliffs" \
+  "Rotation / Truncation Gaps" \
+  "Disabled-Mid-Run Logging" \
+  "Partial-Component Silence" \
+  "Volume-Spikes-Then-Cliff (Pipeline Overload)"; do
   assert_contains "mentions $term" "$term" "$lens_content"
 done
 
 echo ""
-echo "Test 6: prompt covers required thresholds"
+echo "Test 6: first investigation step establishes baseline"
+first_step="$(sed -n '/^1\. /p' "$LENS_FILE" 2>/dev/null)"
+assert_contains "first step establishes per-component baseline" "Establish a per-component baseline first" "$first_step"
+assert_contains "first step precedes gap hunting" "BEFORE looking for gaps" "$first_step"
+
+echo ""
+echo "Test 7: prompt states thresholds and legitimate-idle exclusions"
 for term in \
-  ">= 10 occurrences in any rolling 24-hour window" \
-  ">= 3 distinct sessions / runs / PIDs / hostnames" \
-  "sustained > 5/hour for > 2 hours" \
-  ">= 50 occurrences in any rolling 5-minute burst"; do
-  assert_contains "mentions threshold $term" "$term" "$lens_content"
+  "≥90%" \
+  "≥10×" \
+  "≥5 minutes" \
+  "normally-active hours" \
+  "legitimate idle" \
+  "planned-maintenance" \
+  "Overnight / weekend low-traffic periods" \
+  "Planned maintenance windows"; do
+  assert_contains "mentions $term" "$term" "$lens_content"
 done
 
 echo ""
-echo "Test 7: prompt requires evidence fields"
+echo "Test 8: prompt requires evidence fields"
 for term in \
-  "sanitized event fingerprint" \
-  "2-3 sanitized raw exemplar lines" \
-  "count" \
-  "First-seen" \
-  "last-seen" \
-  "ISO-8601" \
-  "grep -Rn" \
-  "path/to/file.ext:LINE"; do
+  "affected component / worker / subsystem identifier" \
+  "observed baseline volume" \
+  "start timestamp, end timestamp, duration" \
+  "expected volume during the window vs. actual" \
+  "last 3-5 entries before the gap" \
+  "first 3-5 after" \
+  "Activity from other components during the gap window" \
+  "most likely cause"; do
   assert_contains "requires evidence $term" "$term" "$lens_content"
 done
 
 echo ""
-echo "Test 8: redaction contract covers every exported artifact"
-for term in \
-  "event fingerprints" \
-  "deduplication search strings" \
-  "issue titles" \
-  "issue bodies" \
-  "source snippets" \
-  "log snippets" \
-  "Recommended Fix context"; do
-  assert_contains "redaction applies to $term" "$term" "$lens_content"
+echo "Test 9: prompt avoids forbidden tool-specific commands"
+for term in "grep" "awk" "journalctl"; do
+  assert_not_contains "does not prescribe $term" "$term" "$lens_content"
 done
-
-for placeholder in \
-  "<TOKEN>" \
-  "<COOKIE>" \
-  "<EMAIL>" \
-  "<API_KEY>" \
-  "<PASSWORD>" \
-  "<REQUEST_BODY_REDACTED>" \
-  "<PII_REDACTED>"; do
-  assert_contains "defines placeholder $placeholder" "$placeholder" "$lens_content"
-done
-
-assert_contains "stable secrets are forbidden in fingerprint" "If a sensitive value is stable across the storm, it is still not allowed in the fingerprint" "$lens_content"
-assert_contains "fingerprint replaces sensitive values" "rotating fields and sensitive values replaced by placeholders" "$lens_content"
-
-echo ""
-echo "Test 9: dedup search is sanitized before gh issue list"
-assert_contains "requires gh issue list dedup" "gh issue list --state open --limit 100 --search" "$lens_content"
-assert_contains "uses sanitized non-sensitive search phrase" "Build a sanitized, non-sensitive search phrase" "$lens_content"
-assert_contains "search from static text" "static text, an error code, an event name, or a format-string fragment" "$lens_content"
-assert_contains "forbids sensitive values in gh search" 'Do not pass credentials, bearer/session tokens, cookies, emails, request bodies, API keys, passwords, or other PII/secrets to `gh issue list --search`' "$lens_content"
-assert_not_contains "does not suggest raw fingerprint search" "--search \"<event fingerprint substring>\"" "$lens_content"
-
-echo ""
-echo "Test 10: prompt references dedup, severity, and out-of-scope limits"
-for term in \
-  "File one issue per distinct fingerprint" \
-  "[CRITICAL]" \
-  "[HIGH]" \
-  "[MEDIUM]" \
-  "[LOW]" \
-  "Single-occurrence errors" \
-  "Silent-failure" \
-  "Log rotation" \
-  "Security log investigations" \
-  "Log-injection"; do
-  assert_contains "mentions $term" "$term" "$lens_content"
-done
+assert_not_contains "does not assume /var/log" "/var/log" "$lens_content"
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
