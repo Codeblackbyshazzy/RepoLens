@@ -6,6 +6,8 @@ You are analyzing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{
 
 Your task is to synthesize the completed `{{TOTAL_ROUNDS}}` audit rounds for run `{{RUN_ID}}` into a directly actionable JSON issue manifest. You have `{{TOTAL_FINDINGS}}` ingested findings available across all rounds. Use the granularity hint `{{GRANULARITY_HINT}}` as guidance, but never violate the rules below: deduplicate equivalent findings, cluster only when the criteria are met, and never produce umbrella or tracking issues.
 
+The active cross-link mode for this run is `{{CROSS_LINK_MODE}}`. See "Cross-link decision rules" below — this value gates whether `cross_link_actions[]` may contain entries.
+
 ## Inputs
 
 Read every round output produced for this run:
@@ -79,11 +81,15 @@ For each merged entry:
 
 `cross_link_actions[]` is a plan for S4 only. The synthesizer records actions in JSON and does not execute them.
 
-Emit a `{ "type": "comment", "issue_number": <number>, "body": <text> }` action when an ingested finding substantially matches an existing open issue returned by the permitted issue-list call. Use this when suspect files overlap, root cause is similar, and severity or impact overlaps enough that filing a new issue would duplicate the open one.
+The current cross-link mode is **`{{CROSS_LINK_MODE}}`**. Apply it strictly:
 
-Emit a `{ "type": "reopen-suggestion", "issue_number": <number>, "body": <text> }` action only when the ingested round findings themselves contain credible evidence that a closed issue number matches the same root cause. Do not query closed issues; the only GitHub read is the open issue list above.
+- **`off`** — `cross_link_actions[]` MUST be empty (`[]`) on every manifest entry. Do not emit any comment or reopen-suggestion actions, regardless of how strongly a finding matches an existing issue. The dispatcher's validator will reject the manifest if this rule is violated.
+- **`comment`** — you MAY emit `comment` actions for ingested findings that substantially match an existing OPEN issue from the permitted issue-list call (suspect files overlap, root cause is similar, severity or impact overlaps enough that filing a new issue would duplicate the open one). You MUST NOT emit `reopen-suggestion` actions in this mode.
+- **`suggest-reopen`** — you MAY emit `comment` actions as in `comment` mode AND `reopen-suggestion` actions when the ingested round findings themselves contain credible evidence that a closed issue number matches the same root cause. Do not query closed issues; the only GitHub read is the open issue list above. RepoLens will NOT auto-reopen — the filing batch will instead file a small `repolens:reopen-candidate` issue that points at the closed `#N`.
 
-Leave `cross_link_actions[]` empty when there is no strong match. Do not invent issue numbers.
+Emit a `{ "type": "comment", "issue_number": <number>, "body": <text> }` action with a clear, brief markdown body that references the new evidence (e.g., the round number and finding paths). Emit a `{ "type": "reopen-suggestion", "issue_number": <number>, "body": <text> }` action with a body that explains the reopen rationale and references the round evidence.
+
+Leave `cross_link_actions[]` empty when there is no strong match, or when the active mode disallows the action. Do not invent issue numbers.
 
 ## Manifest schema
 

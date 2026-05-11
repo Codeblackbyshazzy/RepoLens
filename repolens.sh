@@ -125,6 +125,11 @@ Options:
   --no-triage             Skip the pre-rounds triage step (round-0 context pack
                            for --mode bugreport). Defaults: OFF for --mode
                            bugreport; ON for every other mode (no-op there).
+  --cross-link <mode>     Synthesizer cross-link behavior for existing issues:
+                           off | comment | suggest-reopen. Defaults: comment
+                           for --mode bugreport; off for every other mode.
+                           Never auto-reopens — suggest-reopen files a small
+                           repolens:reopen-candidate issue instead.
   --local                 Write findings as local markdown files instead of creating remote issues
   --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --forge <provider>      gh (GitHub) | tea (Gitea) | fj (Forgejo/Codeberg) — overrides auto-detection from origin
@@ -165,6 +170,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --mode audit --source ~/docs/threat-report.pdf
   repolens.sh --project ~/myapp --agent claude --mode content --focus topic-extraction --source ~/docs/textbook.pdf
   repolens.sh --project ~/myapp --agent claude --mode bugreport --bug-report ~/reports/crash-on-login.txt
+  repolens.sh --project ~/myapp --agent claude --mode audit --cross-link suggest-reopen
   repolens.sh --project ~/AutoDev --agent claude --logs ~/CybersecurityAssessment/logs/auto-develop/ --domain logs --parallel
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
@@ -222,6 +228,8 @@ Environment:
   REPOLENS_NO_TRIAGE       Fallback for --no-triage. Set to "true"/"1" to
                            disable the triage prefix phase in bugreport mode
                            when the CLI flag is not used.
+  REPOLENS_CROSS_LINK      Fallback for --cross-link. Accepts off|comment|
+                           suggest-reopen. Used only when the CLI flag is unset.
   REPOLENS_HEARTBEAT_INTERVAL
                            Per-lens heartbeat file interval in seconds
                            (default: 15), and parallel-worker log heartbeat
@@ -347,6 +355,8 @@ NO_VERIFIER=""
 NO_VERIFIER_SET=false
 NO_TRIAGE=""
 NO_TRIAGE_SET=false
+CROSS_LINK_MODE=""
+CROSS_LINK_MODE_SET=false
 CHANGE_STATEMENT=""
 BUG_REPORT=""
 BUG_REPORT_SET=false
@@ -438,6 +448,12 @@ while [[ $# -gt 0 ]]; do
       NO_TRIAGE=true
       NO_TRIAGE_SET=true
       shift
+      ;;
+    --cross-link)
+      [[ $# -ge 2 ]] || die "Option --cross-link requires an argument (off|comment|suggest-reopen)."
+      CROSS_LINK_MODE="$2"
+      CROSS_LINK_MODE_SET=true
+      shift 2
       ;;
     --change)
       [[ $# -ge 2 ]] || die "Option --change requires a statement string."
@@ -634,6 +650,32 @@ else
     *) NO_TRIAGE=true ;;
   esac
 fi
+
+# --- Resolve --cross-link ---
+# Synthesizer cross-link behavior: how to react when a newly synthesized
+# cluster matches (or supersedes) an existing open/closed issue.
+#   off            — emit nothing.
+#   comment        — comment on open issues subsumed by new findings.
+#   suggest-reopen — additionally file repolens:reopen-candidate issues for
+#                    closed issues with freshly relevant evidence.
+# RepoLens never auto-reopens. CLI flag wins, then env var, then mode default.
+if $CROSS_LINK_MODE_SET; then
+  : # explicit CLI flag wins
+elif [[ -n "${REPOLENS_CROSS_LINK:-}" ]]; then
+  CROSS_LINK_MODE="$REPOLENS_CROSS_LINK"
+else
+  case "$MODE" in
+    bugreport) CROSS_LINK_MODE="comment" ;;
+    *) CROSS_LINK_MODE="off" ;;
+  esac
+fi
+
+case "$CROSS_LINK_MODE" in
+  off|comment|suggest-reopen) ;;
+  *) die "Invalid value for --cross-link: '$CROSS_LINK_MODE' (expected 'off', 'comment', or 'suggest-reopen')" ;;
+esac
+
+export CROSS_LINK_MODE
 
 CURRENT_ROUND_INDEX=""
 CURRENT_ROUND_TOTAL=""

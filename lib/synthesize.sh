@@ -176,6 +176,8 @@ _synthesize_jaccard_x10000() {
 #     1. JSON parse and top-level-array shape check.
 #     2. Per-entry schema check on required S1 fields.
 #     3. Pairwise Jaccard title-similarity check (> 0.85 threshold).
+#     4. Cross-link gate: when CROSS_LINK_MODE=off (env), every entry's
+#        cross_link_actions[] MUST be empty.
 #   Reports every failure to stderr. Returns 0 on success, non-zero on any
 #   failure. Extra fields are accepted (forward compatibility).
 validate_manifest() {
@@ -265,6 +267,43 @@ validate_manifest() {
       echo "validate_manifest: schema error: $line" >&2
       errors=$((errors + 1))
     done <<< "$schema_errors"
+  fi
+
+  # Cross-link gate: when CROSS_LINK_MODE=off, every entry's
+  # cross_link_actions[] must be empty. The synthesizer prompt is supposed to
+  # honor this, but the validator is the last line of defense against an
+  # agent that ignores the gate.
+  if [[ "${CROSS_LINK_MODE:-off}" == "off" ]]; then
+    local off_violations
+    off_violations="$(jq -r '
+      to_entries[]
+      | select((.value.cross_link_actions // []) | length > 0)
+      | "entry \(.key): cross_link_actions must be empty when CROSS_LINK_MODE=off"
+    ' "$manifest" 2>/dev/null)"
+    if [[ -n "$off_violations" ]]; then
+      while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        echo "validate_manifest: $line" >&2
+        errors=$((errors + 1))
+      done <<< "$off_violations"
+    fi
+  elif [[ "${CROSS_LINK_MODE:-}" == "comment" ]]; then
+    # In comment mode the synthesizer must not emit reopen-suggestion.
+    local comment_violations
+    comment_violations="$(jq -r '
+      to_entries[] as $e
+      | ($e.value.cross_link_actions // [])
+      | to_entries[]
+      | select(.value.type == "reopen-suggestion")
+      | "entry \($e.key).cross_link_actions[\(.key)]: reopen-suggestion not allowed when CROSS_LINK_MODE=comment"
+    ' "$manifest" 2>/dev/null)"
+    if [[ -n "$comment_violations" ]]; then
+      while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        echo "validate_manifest: $line" >&2
+        errors=$((errors + 1))
+      done <<< "$comment_violations"
+    fi
   fi
 
   if (( errors > 0 )); then
@@ -376,6 +415,8 @@ run_synthesizer() {
     forge_issue_list_open="Use the active forge CLI to list open issues"
   fi
 
+  local cross_link_mode="${CROSS_LINK_MODE:-off}"
+
   local vars
   vars="RUN_ID=$run_id"
   vars+="|PROJECT_PATH=$project_path"
@@ -384,6 +425,7 @@ run_synthesizer() {
   vars+="|TOTAL_ROUNDS=$total_rounds"
   vars+="|TOTAL_FINDINGS=$total_findings"
   vars+="|GRANULARITY_HINT=$granularity_hint"
+  vars+="|CROSS_LINK_MODE=$cross_link_mode"
   vars+="|FORGE_ISSUE_LIST_OPEN=$forge_issue_list_open"
 
   if ! declare -F compose_prompt >/dev/null 2>&1; then

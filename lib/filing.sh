@@ -188,6 +188,167 @@ _filing_real_agent() {
   return 1
 }
 
+# _filing_cross_link_enact <run_id>
+#   Iterate every manifest entry's cross_link_actions[] and enact them via
+#   the forge layer. Idempotent: each (type, issue_number) pair is keyed by
+#   a content-hash sentinel under final/filed/cross-link/, so re-running the
+#   dispatcher does not re-enact already-completed actions.
+#
+#   Per-action state machine for each cross-link entry:
+#     1. <key>.done present     -> SKIP
+#     2. <key>.failed present   -> SKIP (operator must rm to retry)
+#     3. otherwise              -> attempt; on success write .done; on
+#                                  failure write .failed (non-fatal)
+#
+#   Failures NEVER fail the overall run — cross-link actions are best-effort.
+#   They are logged to stderr and counted in the run's diagnostics only.
+#
+#   Required globals: AGENT, FORGE_REPO (or REPO_OWNER+REPO_NAME).
+#   Optional globals: REPOLENS_REOPEN_LABEL (defaults "repolens:reopen-candidate").
+#
+#   Cross-link actions on a cluster whose own filing failed
+#   (<cid>.failed present, no <cid>.url) are skipped to avoid posting a
+#   cross-link comment that references a non-existent new issue.
+_filing_cross_link_enact() {
+  local run_id="${1:-}"
+  local log_base manifest filed_dir cross_dir
+  log_base="$(_filing_log_base "$run_id")"
+  manifest="$log_base/final/manifest.json"
+  filed_dir="$log_base/final/filed"
+  cross_dir="$filed_dir/cross-link"
+
+  if [[ ! -f "$manifest" ]]; then
+    return 0
+  fi
+
+  local repo_owner="${REPO_OWNER:-}"
+  local repo_name="${REPO_NAME:-}"
+  local forge_repo="${FORGE_REPO:-}"
+  if [[ -z "$forge_repo" && -n "$repo_owner" && -n "$repo_name" ]]; then
+    forge_repo="$repo_owner/$repo_name"
+  fi
+  local reopen_label="${REPOLENS_REOPEN_LABEL:-repolens:reopen-candidate}"
+
+  # Build a flat list of (cluster_id, idx, type, issue_number, body) tuples
+  # in NUL-delimited form so multi-line bodies survive intact.
+  local tuples
+  tuples="$(jq -r '
+    to_entries[]
+    | .key as $i
+    | .value.cluster_id as $cid
+    | (.value.cross_link_actions // [])
+    | to_entries[]
+    | [$cid, .key, .value.type, (.value.issue_number | tostring), .value.body]
+    | @tsv
+  ' "$manifest" 2>/dev/null)" || return 0
+
+  if [[ -z "$tuples" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$cross_dir" || {
+    echo "_filing_cross_link_enact: cannot create cross-link dir: $cross_dir" >&2
+    return 0
+  }
+
+  # De-duplicate (type, issue_number) across clusters so a comment is posted
+  # at most once even when multiple clusters flag the same existing issue.
+  local -A seen=()
+
+  local line cluster_id idx action_type issue_number body key sentinel_done sentinel_failed body_file rc
+  while IFS=$'\t' read -r cluster_id idx action_type issue_number body; do
+    [[ -n "$action_type" && -n "$issue_number" ]] || continue
+
+    # JSON-escaped \n is literal in TSV; restore newlines and the few JSON
+    # escape sequences likely to appear in agent-emitted bodies. This is a
+    # best-effort restoration — the manifest validator already enforces that
+    # body is a non-empty string, so we trust the structure.
+    body="${body//\\n/$'\n'}"
+    body="${body//\\t/$'\t'}"
+    body="${body//\\\"/\"}"
+    body="${body//\\\\/\\}"
+
+    key="${action_type}-${issue_number}"
+    if [[ -n "${seen[$key]:-}" ]]; then
+      continue
+    fi
+    seen["$key"]=1
+
+    sentinel_done="$cross_dir/$key.done"
+    sentinel_failed="$cross_dir/$key.failed"
+    if [[ -e "$sentinel_done" || -e "$sentinel_failed" ]]; then
+      continue
+    fi
+
+    # If the parent cluster failed and has no .url, skip — a comment that
+    # references a non-existent new issue is worse than no comment.
+    if [[ -n "$cluster_id" && -e "$filed_dir/$cluster_id.failed" && ! -e "$filed_dir/$cluster_id.url" ]]; then
+      printf 'cross_link_skipped_parent_failed: cluster=%s key=%s\n' \
+        "$cluster_id" "$key" > "$sentinel_failed"
+      continue
+    fi
+
+    body_file="$cross_dir/$key.body.md"
+    printf '%s\n' "$body" > "$body_file" || {
+      echo "_filing_cross_link_enact: cannot write body file for $key" >&2
+      continue
+    }
+
+    rc=0
+    case "$action_type" in
+      comment)
+        if [[ -z "$forge_repo" ]]; then
+          echo "_filing_cross_link_enact: FORGE_REPO unset; skipping comment on #$issue_number" >&2
+          rc=1
+        elif declare -F forge_issue_comment >/dev/null 2>&1; then
+          forge_issue_comment "$forge_repo" "$issue_number" "$body_file" \
+            >>"$cross_dir/$key.log" 2>&1 || rc=$?
+        else
+          echo "_filing_cross_link_enact: forge_issue_comment unavailable" >&2
+          rc=1
+        fi
+        ;;
+      reopen-suggestion)
+        if [[ -z "$forge_repo" ]]; then
+          echo "_filing_cross_link_enact: FORGE_REPO unset; skipping reopen-suggestion for #$issue_number" >&2
+          rc=1
+        elif declare -F forge_issue_create >/dev/null 2>&1; then
+          local title="[reopen-candidate] consider re-opening #$issue_number"
+          # Prepend a banner so reviewers can see this is a RepoLens-emitted
+          # reopen suggestion with the source closed issue called out
+          # explicitly in the body.
+          local banner_file="$cross_dir/$key.body.banner.md"
+          {
+            printf '> Generated by RepoLens run %s\n' "${run_id}"
+            printf '> Source: closed issue #%s\n\n' "$issue_number"
+            cat "$body_file"
+            printf '\n\nLabel suggestion: `%s`\n' "$reopen_label"
+          } > "$banner_file"
+          forge_issue_create "$forge_repo" "$title" "$banner_file" \
+            >>"$cross_dir/$key.log" 2>&1 || rc=$?
+        else
+          echo "_filing_cross_link_enact: forge_issue_create unavailable" >&2
+          rc=1
+        fi
+        ;;
+      *)
+        echo "_filing_cross_link_enact: unknown action type '$action_type' for #$issue_number" >&2
+        rc=1
+        ;;
+    esac
+
+    if (( rc == 0 )); then
+      : > "$sentinel_done"
+    else
+      printf 'rc=%d action=%s issue=%s\n' "$rc" "$action_type" "$issue_number" \
+        > "$sentinel_failed"
+      echo "_filing_cross_link_enact: $action_type on #$issue_number failed (rc=$rc), continuing" >&2
+    fi
+  done <<< "$tuples"
+
+  return 0
+}
+
 # dispatch_filing_batch <run_id>
 #   Consumes logs/<run-id>/final/manifest.json and fans out one filing
 #   agent per cluster, in parallel, with per-cluster lock files for
@@ -341,6 +502,12 @@ dispatch_filing_batch() {
       vfailed=$((vfailed + 1))
     fi
   done
+
+  # Enact cross-link actions after every cluster's filing has settled. The
+  # call is best-effort and never affects the overall return value.
+  if [[ "${CROSS_LINK_MODE:-off}" != "off" ]]; then
+    _filing_cross_link_enact "$run_id" || true
+  fi
 
   printf 'Filed: %d, Verification-failed: %d, Skipped-existing: %d\n' \
     "$filed" "$vfailed" "$skipped_existing"
