@@ -95,8 +95,12 @@ Commands:
   status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
 
 Options:
-  --mode <mode>           audit (default) | feature | bugfix | discover | deploy | custom | opensource | content
+  --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content
   --change <statement>    Change impact analysis — propagates statement across all lenses (implies --mode custom)
+  --bug-report <file|text>
+                          Symptom report for --mode bugreport. Accepts a file path (read verbatim)
+                          or inline text. Required when --mode bugreport is set
+                          (or REPOLENS_BUG_REPORT_PATH is exported).
   --source <file>         Source material for content creation (PDF, text, markdown — agent reads directly)
   --logs <path>           Runtime log file or directory for the 'logs' domain (path string only — agent reads it)
   --focus <lens-id>       Run a single lens (e.g., "injection", "dead-code")
@@ -145,6 +149,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --mode content --source ~/docs/curriculum.md --spec lesson-format.md
   repolens.sh --project ~/myapp --agent claude --mode audit --source ~/docs/threat-report.pdf
   repolens.sh --project ~/myapp --agent claude --mode content --focus topic-extraction --source ~/docs/textbook.pdf
+  repolens.sh --project ~/myapp --agent claude --mode bugreport --bug-report ~/reports/crash-on-login.txt
   repolens.sh --project ~/AutoDev --agent claude --logs ~/CybersecurityAssessment/logs/auto-develop/ --domain logs --parallel
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
@@ -171,6 +176,10 @@ Environment:
                            Open-source readiness default: 600.
   REPOLENS_AGENT_TIMEOUT_CONTENT
                            Content default: 600.
+  REPOLENS_AGENT_TIMEOUT_BUGREPORT
+                           Bug report default: 600.
+  REPOLENS_BUG_REPORT_PATH Fallback for --bug-report when the CLI flag is unset.
+                           Path to a text file read verbatim as the bug report.
   REPOLENS_AGENT_KILL_GRACE
                            Seconds after an agent timeout to wait after SIGTERM
                            before timeout(1) escalates to SIGKILL (default: 30).
@@ -231,6 +240,7 @@ EOF
   echo "  custom      Change impact — analyzes what needs adapting (requires --change)"
   echo "  opensource  Open source readiness — audits if a repo can go public safely"
   echo "  content     Content audit & creation — audits existing content, creates from --source"
+  echo "  bugreport   Symptom-driven investigation — runs lenses on a user bug report (requires --bug-report)"
 
   # Parse all domains in one jq call
   local domain_data
@@ -269,7 +279,7 @@ EOF
   done <<< "$domain_data"
 
   echo ""
-  echo "Domains (audit/feature/bugfix/custom — ${code_total} lenses):"
+  echo "Domains (audit/feature/bugfix/bugreport/custom — ${code_total} lenses):"
   echo ""
   printf "%s" "$code_output"
   echo "Domains (discover mode — ${discover_total} lenses):"
@@ -309,6 +319,8 @@ DEPTH_SET=false
 ROUNDS=""
 ROUNDS_SET=false
 CHANGE_STATEMENT=""
+BUG_REPORT=""
+BUG_REPORT_SET=false
 SOURCE_FILE=""
 LOGS_PATH=""
 HOSTED=false
@@ -392,6 +404,24 @@ while [[ $# -gt 0 ]]; do
       CHANGE_STATEMENT="$2"
       shift 2
       ;;
+    --bug-report)
+      [[ $# -ge 2 ]] || die "Option --bug-report requires a file path or inline text argument."
+      if [[ -f "$2" ]]; then
+        [[ -r "$2" ]] || die "Bug report file not readable: $2"
+        _bug_report_size="$(wc -c < "$2")"
+        [[ "$_bug_report_size" -le 102400 ]] || die "Bug report file too large (${_bug_report_size} bytes, max 100KB): $2"
+        # shellcheck disable=SC2094
+        if ! tr -d '\0' < "$2" | cmp -s - "$2"; then
+          die "Bug report file appears to be binary: $2 — only text files are supported."
+        fi
+        BUG_REPORT="$(cat "$2")"
+        unset _bug_report_size
+      else
+        BUG_REPORT="$2"
+      fi
+      BUG_REPORT_SET=true
+      shift 2
+      ;;
     --source)
       [[ $# -ge 2 ]] || die "Option --source requires a file path argument."
       SOURCE_FILE="$2"
@@ -471,9 +501,30 @@ fi
 
 # --- Validate mode ---
 case "$MODE" in
-  audit|feature|bugfix|discover|deploy|custom|opensource|content) ;;
-  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'discover', 'deploy', 'custom', 'opensource', or 'content')" ;;
+  audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content) ;;
+  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', or 'content')" ;;
 esac
+
+# --- Handle --bug-report flag ---
+if $BUG_REPORT_SET && [[ "$MODE" != "bugreport" ]]; then
+  die "--bug-report requires --mode bugreport (got --mode $MODE)"
+fi
+
+if [[ "$MODE" == "bugreport" ]]; then
+  if ! $BUG_REPORT_SET && [[ -z "$BUG_REPORT" ]] && [[ -n "${REPOLENS_BUG_REPORT_PATH:-}" ]]; then
+    [[ -f "$REPOLENS_BUG_REPORT_PATH" ]] || die "REPOLENS_BUG_REPORT_PATH points to a non-existent file: $REPOLENS_BUG_REPORT_PATH"
+    [[ -r "$REPOLENS_BUG_REPORT_PATH" ]] || die "REPOLENS_BUG_REPORT_PATH points to an unreadable file: $REPOLENS_BUG_REPORT_PATH"
+    _bug_report_env_size="$(wc -c < "$REPOLENS_BUG_REPORT_PATH")"
+    [[ "$_bug_report_env_size" -le 102400 ]] || die "Bug report file too large (${_bug_report_env_size} bytes, max 100KB): $REPOLENS_BUG_REPORT_PATH"
+    # shellcheck disable=SC2094
+    if ! tr -d '\0' < "$REPOLENS_BUG_REPORT_PATH" | cmp -s - "$REPOLENS_BUG_REPORT_PATH"; then
+      die "Bug report file appears to be binary: $REPOLENS_BUG_REPORT_PATH — only text files are supported."
+    fi
+    BUG_REPORT="$(cat "$REPOLENS_BUG_REPORT_PATH")"
+    BUG_REPORT_SET=true
+    unset _bug_report_env_size
+  fi
+fi
 
 if $ROUNDS_SET; then
   validate_rounds "$MODE" "$ROUNDS" "--rounds"
@@ -481,7 +532,7 @@ elif [[ ${REPOLENS_ROUNDS+x} ]]; then
   ROUNDS="$REPOLENS_ROUNDS"
   validate_rounds "$MODE" "$ROUNDS" "REPOLENS_ROUNDS"
 else
-  ROUNDS=1
+  ROUNDS="$(mode_default_rounds "$MODE")"
   validate_rounds "$MODE" "$ROUNDS" "--rounds"
 fi
 
@@ -505,6 +556,13 @@ RATE_LIMIT_MAX_SLEEP_SECS=$((10#$RATE_LIMIT_MAX_SLEEP_SECS))
 # --- Validate --change requirement ---
 if [[ "$MODE" == "custom" && -z "$CHANGE_STATEMENT" ]]; then
   die "Mode 'custom' requires --change \"your change statement\""
+fi
+
+# --- Validate --bug-report requirement ---
+# Resume runs may rehydrate BUG_REPORT from logs/<run-id>/bug-report.txt later;
+# defer the empty-bug-report check until after resume rehydration.
+if [[ "$MODE" == "bugreport" && -z "$BUG_REPORT" && -z "$RESUME_RUN_ID" ]]; then
+  die "Mode 'bugreport' requires --bug-report <file|text> (or REPOLENS_BUG_REPORT_PATH env var)"
 fi
 
 # --- Handle remote repository URL ---
@@ -795,6 +853,22 @@ mkdir -p "$LOG_BASE"
 HEARTBEAT_DIR="$LOG_BASE/.heartbeat"
 mkdir -p "$HEARTBEAT_DIR"
 SUMMARY_FILE="$LOG_BASE/summary.json"
+
+# --- Persist / rehydrate bug report for bugreport mode ---
+# The resolved bug report is copied verbatim to logs/<run-id>/bug-report.txt so
+# the run is fully reproducible from the log dir alone (matches how --spec and
+# --source inputs are captured into the run context). On --resume, if the
+# caller did not pass a fresh --bug-report, read the persisted copy back so
+# downstream lens prompts substitute {{BUG_REPORT}} correctly.
+BUG_REPORT_FILE="$LOG_BASE/bug-report.txt"
+if [[ "$MODE" == "bugreport" ]]; then
+  if [[ -n "$BUG_REPORT" ]]; then
+    printf '%s' "$BUG_REPORT" > "$BUG_REPORT_FILE"
+  elif [[ -n "$RESUME_RUN_ID" && -f "$BUG_REPORT_FILE" ]]; then
+    BUG_REPORT="$(cat "$BUG_REPORT_FILE")"
+  fi
+  [[ -n "$BUG_REPORT" ]] || die "Mode 'bugreport' could not resolve a bug report (and resume could not recover one from $BUG_REPORT_FILE)"
+fi
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
@@ -869,6 +943,7 @@ log_info "Agent timeout kill grace: ${AGENT_KILL_GRACE_SECS}s"
 [[ "$MODE" == "custom" ]] && log_info "Custom mode: change impact analysis (DONE streak: 1)"
 [[ "$MODE" == "opensource" ]] && log_info "Open source mode: readiness audit (DONE streak: 1)"
 [[ "$MODE" == "content" ]] && log_info "Content mode: content audit & creation (DONE streak: 1)"
+[[ "$MODE" == "bugreport" ]] && log_info "Bug report mode: rounds-driven symptom investigation (rounds: $ROUNDS, DONE streak: $DONE_STREAK_REQUIRED)"
 [[ -n "$CHANGE_STATEMENT" ]] && log_info "Change: $CHANGE_STATEMENT"
 [[ -n "$SOURCE_FILE" ]] && log_info "Source: $SOURCE_FILE"
 [[ -n "$LOGS_PATH" ]] && log_info "Logs: $LOGS_PATH"
@@ -1450,6 +1525,7 @@ ensure_labels() {
     audit)    label_prefix="audit" ;;
     feature)  label_prefix="feature" ;;
     bugfix)   label_prefix="bugfix" ;;
+    bugreport) label_prefix="bugreport" ;;
     discover) label_prefix="discover" ;;
     deploy)   label_prefix="deploy" ;;
     custom)      label_prefix="change" ;;
@@ -1549,6 +1625,7 @@ run_lens() {
     audit)    label_prefix="audit" ;;
     feature)  label_prefix="feature" ;;
     bugfix)   label_prefix="bugfix" ;;
+    bugreport) label_prefix="bugreport" ;;
     discover) label_prefix="discover" ;;
     deploy)   label_prefix="deploy" ;;
     custom)      label_prefix="change" ;;
@@ -1585,6 +1662,9 @@ run_lens() {
     vars+="|HYPOTHESES_TO_VERIFY=@${HYPOTHESES_TO_VERIFY_FILE}"
   fi
   [[ -n "$CHANGE_STATEMENT" ]] && vars+="|CHANGE_STATEMENT=${CHANGE_STATEMENT}"
+  if [[ "$MODE" == "bugreport" && -f "$BUG_REPORT_FILE" ]]; then
+    vars+="|BUG_REPORT=@${BUG_REPORT_FILE}"
+  fi
   [[ -n "$SOURCE_FILE" ]] && vars+="|SOURCE_PATH=${SOURCE_FILE}"
   [[ -n "$LOGS_PATH" ]] && vars+="|LOGS_PATH=${LOGS_PATH}"
   [[ -n "$HOSTED_NETWORK" ]] && vars+="|HOSTED_NETWORK=${HOSTED_NETWORK}"

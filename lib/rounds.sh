@@ -505,7 +505,9 @@ _rounds_meta_prompt_vars() {
   round_total="${CURRENT_ROUND_TOTAL:-${ROUND_TOTAL:-$next_round}}"
   original_scope="${ORIGINAL_BUG_REPORT_OR_SCOPE:-}"
   if [[ -z "$original_scope" ]]; then
-    if [[ -n "${CHANGE_STATEMENT:-}" ]]; then
+    if [[ "${MODE:-}" == "bugreport" && -n "${BUG_REPORT:-}" ]]; then
+      original_scope="$BUG_REPORT"
+    elif [[ -n "${CHANGE_STATEMENT:-}" ]]; then
       original_scope="$CHANGE_STATEMENT"
     elif [[ -n "${SPEC_FILE:-}" ]]; then
       original_scope="Use the configured spec file as the original scope."
@@ -524,6 +526,11 @@ _rounds_meta_prompt_vars() {
       between_round_task="${BETWEEN_ROUND_TASK:-find fresh bug-hunting angles for the next round}"
       coverage_dimension="${COVERAGE_DIMENSION:-failure mode and defect coverage}"
       prior_output_anchor="${PRIOR_OUTPUT_ANCHOR:-prior bug findings}"
+      ;;
+    bugreport)
+      between_round_task="${BETWEEN_ROUND_TASK:-find fresh symptom-causation angles for the next round}"
+      coverage_dimension="${COVERAGE_DIMENSION:-symptom causation coverage}"
+      prior_output_anchor="${PRIOR_OUTPUT_ANCHOR:-prior bug-report findings}"
       ;;
     deploy)
       between_round_task="${BETWEEN_ROUND_TASK:-find fresh deployment and operations audit angles for the next round}"

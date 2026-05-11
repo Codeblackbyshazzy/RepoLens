@@ -61,6 +61,19 @@ declare -A MODE_DEFAULT_DEPTH=(
   [audit]=3
   [feature]=3
   [bugfix]=3
+  [bugreport]=1
+  [custom]=1
+  [discover]=1
+  [deploy]=1
+  [opensource]=1
+  [content]=1
+)
+
+declare -A MODE_DEFAULT_ROUNDS=(
+  [audit]=1
+  [feature]=1
+  [bugfix]=1
+  [bugreport]=3
   [custom]=1
   [discover]=1
   [deploy]=1
@@ -87,6 +100,13 @@ mode_default_depth() {
   printf '%s\n' "$depth"
 }
 
+mode_default_rounds() {
+  local mode="$1"
+  local rounds="${MODE_DEFAULT_ROUNDS[$mode]:-}"
+  [[ -n "$rounds" ]] || die "Internal error: unsupported mode '$mode' for rounds default"
+  printf '%s\n' "$rounds"
+}
+
 validate_rounds() {
   local mode="$1"
   local value="$2"
@@ -105,7 +125,7 @@ agent_timeout_default_for_mode() {
   local mode="$1"
   case "$mode" in
     deploy) printf '%s\n' 1800 ;;
-    audit|feature|bugfix|discover|custom|opensource|content) printf '%s\n' 600 ;;
+    audit|feature|bugfix|bugreport|discover|custom|opensource|content) printf '%s\n' 600 ;;
     *) die "Internal error: unsupported mode '$mode' for timeout default" ;;
   esac
 }
