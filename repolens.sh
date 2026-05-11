@@ -48,6 +48,8 @@ source "$SCRIPT_DIR/lib/rounds.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/verify.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/triage.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/hosted.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/android.sh"
@@ -120,6 +122,9 @@ Options:
   --no-verifier           Skip the post-rounds verifier step. Defaults: ON for
                            --mode bugreport (evidence accuracy is critical when
                            filing bug reports); OFF for every other mode.
+  --no-triage             Skip the pre-rounds triage step (round-0 context pack
+                           for --mode bugreport). Defaults: OFF for --mode
+                           bugreport; ON for every other mode (no-op there).
   --local                 Write findings as local markdown files instead of creating remote issues
   --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --forge <provider>      gh (GitHub) | tea (Gitea) | fj (Forgejo/Codeberg) — overrides auto-detection from origin
@@ -204,6 +209,9 @@ Environment:
                            Must be a positive integer within the mode cap.
   REPOLENS_NO_VERIFIER     Fallback for --no-verifier. Set to "true"/"1" to
                            disable the verifier when the CLI flag is not used.
+  REPOLENS_NO_TRIAGE       Fallback for --no-triage. Set to "true"/"1" to
+                           disable the triage prefix phase in bugreport mode
+                           when the CLI flag is not used.
   REPOLENS_HEARTBEAT_INTERVAL
                            Per-lens heartbeat file interval in seconds
                            (default: 15), and parallel-worker log heartbeat
@@ -327,6 +335,8 @@ ROUNDS=""
 ROUNDS_SET=false
 NO_VERIFIER=""
 NO_VERIFIER_SET=false
+NO_TRIAGE=""
+NO_TRIAGE_SET=false
 CHANGE_STATEMENT=""
 BUG_REPORT=""
 BUG_REPORT_SET=false
@@ -411,6 +421,11 @@ while [[ $# -gt 0 ]]; do
     --no-verifier)
       NO_VERIFIER=true
       NO_VERIFIER_SET=true
+      shift
+      ;;
+    --no-triage)
+      NO_TRIAGE=true
+      NO_TRIAGE_SET=true
       shift
       ;;
     --change)
@@ -568,6 +583,27 @@ else
   case "$MODE" in
     bugreport) NO_VERIFIER=false ;;
     *) NO_VERIFIER=true ;;
+  esac
+fi
+
+# --- Resolve --no-triage ---
+# Triage runs once before run_rounds and only does work in bugreport mode.
+# Default OFF only for bugreport, where the round-0 context pack saves every
+# round-1 lens from independently re-discovering the same surface-level history.
+# Every other mode defaults ON: no triage prompt is composed and no agent call
+# is spent. CLI flag wins, then env var, then mode-driven default.
+if $NO_TRIAGE_SET; then
+  : # explicit CLI flag wins
+elif [[ -n "${REPOLENS_NO_TRIAGE:-}" ]]; then
+  case "${REPOLENS_NO_TRIAGE,,}" in
+    1|true|yes|on) NO_TRIAGE=true ;;
+    0|false|no|off|"") NO_TRIAGE=false ;;
+    *) die "REPOLENS_NO_TRIAGE must be a boolean (true/false), got: $REPOLENS_NO_TRIAGE" ;;
+  esac
+else
+  case "$MODE" in
+    bugreport) NO_TRIAGE=false ;;
+    *) NO_TRIAGE=true ;;
   esac
 fi
 
@@ -904,6 +940,12 @@ if [[ "$MODE" == "bugreport" ]]; then
   fi
   [[ -n "$BUG_REPORT" ]] || die "Mode 'bugreport' could not resolve a bug report (and resume could not recover one from $BUG_REPORT_FILE)"
 fi
+
+# Path to the round-0 triage context pack. Populated by run_triage when
+# --no-triage is off in bugreport mode; substituted into round-1 lens prompts
+# via the {{TRIAGE_CONTEXT_PACK}} slot. When the file is absent (other modes,
+# --no-triage, or triage failure) the slot resolves to empty in lens prompts.
+TRIAGE_CONTEXT_PACK_FILE="$LOG_BASE/triage/context-pack.md"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
@@ -1700,6 +1742,9 @@ run_lens() {
   if [[ "$MODE" == "bugreport" && -f "$BUG_REPORT_FILE" ]]; then
     vars+="|BUG_REPORT=@${BUG_REPORT_FILE}"
   fi
+  if [[ "$MODE" == "bugreport" && -f "$TRIAGE_CONTEXT_PACK_FILE" ]]; then
+    vars+="|TRIAGE_CONTEXT_PACK=@${TRIAGE_CONTEXT_PACK_FILE}"
+  fi
   [[ -n "$SOURCE_FILE" ]] && vars+="|SOURCE_PATH=${SOURCE_FILE}"
   [[ -n "$LOGS_PATH" ]] && vars+="|LOGS_PATH=${LOGS_PATH}"
   [[ -n "$HOSTED_NETWORK" ]] && vars+="|HOSTED_NETWORK=${HOSTED_NETWORK}"
@@ -1939,6 +1984,20 @@ run_lens() {
 
   log_info "[$domain/$lens_id] Finished after $iteration iteration(s), $lens_issues issue(s)"
 }
+
+# --- Triage (pre-rounds, round-0 context pack) ---
+# Single-shot agent that produces logs/<run-id>/triage/context-pack.md so every
+# round-1 lens shares a compact briefing of suspect commits, linked-issue
+# summaries, recent author activity, and an initial hypothesis tree. Failure is
+# non-fatal: round-1 lenses fall back to doing their own initial history scan.
+if [[ "$MODE" == "bugreport" && "${NO_TRIAGE:-true}" != "true" ]]; then
+  log_info "Triage: building round-0 context pack"
+  if run_triage "$RUN_ID"; then
+    log_info "Triage: context-pack.md promoted ($TRIAGE_CONTEXT_PACK_FILE)"
+  else
+    log_warn "Triage: failed — proceeding with empty context pack"
+  fi
+fi
 
 # --- Execute lenses ---
 RUN_ROUNDS_RC=0

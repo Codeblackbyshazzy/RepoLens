@@ -47,7 +47,7 @@ _template_resolve_file_backed_value() {
   local key="$1" value="$2" path
 
   case "$key" in
-    PRIOR_ROUND_DIGEST|HYPOTHESES_TO_VERIFY|BUG_REPORT) ;;
+    PRIOR_ROUND_DIGEST|HYPOTHESES_TO_VERIFY|BUG_REPORT|TRIAGE_CONTEXT_PACK) ;;
     *)
       printf '%s' "$value"
       return 0
@@ -91,7 +91,7 @@ compose_prompt() {
   local local_mode="${9:-false}" local_output_dir="${10:-}"
   local base_content lens_body spec_section prompt key value sentinel_seed
   local pair char next i vars_len
-  local prior_round_digest_sentinel hypotheses_to_verify_sentinel round_context_sentinel
+  local prior_round_digest_sentinel hypotheses_to_verify_sentinel round_context_sentinel triage_context_pack_sentinel
   local -a pairs=()
   local -A prompt_vars=()
 
@@ -101,6 +101,7 @@ compose_prompt() {
   prior_round_digest_sentinel="__REPOLENS_PRIOR_ROUND_DIGEST_${sentinel_seed}__"
   hypotheses_to_verify_sentinel="__REPOLENS_HYPOTHESES_TO_VERIFY_${sentinel_seed}__"
   round_context_sentinel="__REPOLENS_ROUND_CONTEXT_SECTION_${sentinel_seed}__"
+  triage_context_pack_sentinel="__REPOLENS_TRIAGE_CONTEXT_PACK_${sentinel_seed}__"
 
   # Step 1: Insert lens body
   prompt="${base_content//\{\{LENS_BODY\}\}/$lens_body}"
@@ -139,6 +140,9 @@ compose_prompt() {
         ;;
       HYPOTHESES_TO_VERIFY)
         prompt="${prompt//\{\{$key\}\}/$hypotheses_to_verify_sentinel}"
+        ;;
+      TRIAGE_CONTEXT_PACK)
+        prompt="${prompt//\{\{$key\}\}/$triage_context_pack_sentinel}"
         ;;
       *)
         prompt="${prompt//\{\{$key\}\}/$value}"
@@ -386,9 +390,13 @@ ${spec_content}
   fi
 
   prompt="${prompt//\{\{SPEC_SECTION\}\}/$spec_section}"
+  # Clear any unsubstituted {{TRIAGE_CONTEXT_PACK}} placeholder so non-bugreport
+  # templates (which never receive the pack) do not leak the raw token through.
+  prompt="${prompt//\{\{TRIAGE_CONTEXT_PACK\}\}/$triage_context_pack_sentinel}"
   prompt="${prompt//$round_context_sentinel/$round_context_section}"
   prompt="${prompt//$prior_round_digest_sentinel/${prompt_vars[PRIOR_ROUND_DIGEST]:-}}"
   prompt="${prompt//$hypotheses_to_verify_sentinel/${prompt_vars[HYPOTHESES_TO_VERIFY]:-}}"
+  prompt="${prompt//$triage_context_pack_sentinel/${prompt_vars[TRIAGE_CONTEXT_PACK]:-}}"
 
   printf "%s" "$prompt"
 }

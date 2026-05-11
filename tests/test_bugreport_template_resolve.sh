@@ -123,6 +123,25 @@ assert_contains "PRIOR_ROUND_DIGEST still expands" "digest body" "$digest_resolv
 assert_contains "HYPOTHESES_TO_VERIFY still expands" "hypotheses body" "$hyp_resolved"
 
 echo ""
+echo "Test 2b: TRIAGE_CONTEXT_PACK @path is file-backed and pipe-safe (issue #171)"
+cat > "$TMPDIR/pack.md" <<'EOF'
+# Triage context pack
+
+## Mentioned files
+- lib/foo.sh | also lib/bar.sh
+EOF
+pack_resolved="$(_template_resolve_file_backed_value "TRIAGE_CONTEXT_PACK" "@${TMPDIR}/pack.md")"
+assert_contains "TRIAGE_CONTEXT_PACK @path expands to pack body" \
+                "# Triage context pack" \
+                "$pack_resolved"
+assert_contains "TRIAGE_CONTEXT_PACK @path preserves pipe characters" \
+                "lib/foo.sh | also lib/bar.sh" \
+                "$pack_resolved"
+assert_not_contains "TRIAGE_CONTEXT_PACK @path does not retain leading @-marker" \
+                    "@${TMPDIR}/pack.md" \
+                    "$pack_resolved"
+
+echo ""
 echo "Test 3: unrelated keys still pass through unchanged"
 unrelated="$(_template_resolve_file_backed_value "LENS_NAME" "@${TMPDIR}/bug-report.txt")"
 assert_contains "unrelated key keeps raw @path" \
@@ -149,5 +168,22 @@ assert_not_contains "rendered prompt does not leave @path token in place" \
 assert_not_contains "rendered prompt consumes the {{BUG_REPORT}} placeholder" \
                     "{{BUG_REPORT}}" \
                     "$rendered"
+
+echo ""
+echo "Test 5: TRIAGE_CONTEXT_PACK slot is substituted in bugreport.md (issue #171)"
+rendered_with_pack="$(compose_prompt "$SCRIPT_DIR/prompts/_base/bugreport.md" "$TMPDIR/lens.md" "${base_vars}|BUG_REPORT=@${TMPDIR}/bug-report.txt|TRIAGE_CONTEXT_PACK=@${TMPDIR}/pack.md" "" "bugreport")"
+assert_contains "rendered bugreport prompt includes triage pack body" \
+                "# Triage context pack" \
+                "$rendered_with_pack"
+assert_not_contains "rendered prompt consumes the {{TRIAGE_CONTEXT_PACK}} placeholder" \
+                    "{{TRIAGE_CONTEXT_PACK}}" \
+                    "$rendered_with_pack"
+
+echo ""
+echo "Test 6: missing TRIAGE_CONTEXT_PACK still consumes the placeholder (empty fallback)"
+rendered_no_pack="$(compose_prompt "$SCRIPT_DIR/prompts/_base/bugreport.md" "$TMPDIR/lens.md" "${base_vars}|BUG_REPORT=@${TMPDIR}/bug-report.txt" "" "bugreport")"
+assert_not_contains "rendered prompt without pack consumes the {{TRIAGE_CONTEXT_PACK}} placeholder" \
+                    "{{TRIAGE_CONTEXT_PACK}}" \
+                    "$rendered_no_pack"
 
 finish
