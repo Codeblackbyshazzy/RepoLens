@@ -143,6 +143,10 @@ RepoLens is a power tool. Before you point it at anything you care about — or 
 
 You are responsible for every dollar of API spend. Know your per-token pricing.
 
+**Cost scales with `depth × rounds`.** Both flags multiply the per-lens iteration cost: raising `--depth` (within-lens iterations) and `--rounds` (cross-lens orchestration) compounds. A `--depth 5 --rounds 3` run is roughly **5× the per-lens iteration cost and 3× the lens-pass count** compared to defaults. Preview the resolved estimate with `--dry-run` before launching.
+
+**`--rounds >= 4` requires explicit cost acknowledgement.** RepoLens refuses to launch unless you pass `--i-know-this-is-expensive` (or the equivalent `--max-cost <dollars>` + `--yes` combination). The hard-ceiling environment variable `REPOLENS_MAX_ROUNDS` (default `5`) caps `--rounds` and cannot be bypassed by `--i-know-this-is-expensive` — to exceed it, set `REPOLENS_MAX_ROUNDS` explicitly before launching.
+
 ### Rate Limits & Automated Traffic
 
 > [!NOTE]
@@ -254,6 +258,36 @@ RepoLens supports 8 modes. Each mode controls which domains/lenses are visible a
 ./repolens.sh --project ~/my-app --agent claude --mode deploy --dry-run
 ```
 
+## Advanced controls
+
+These flags scale RepoLens beyond the simple [Quickstart](#quickstart) invocations. They compound cost — read [Warnings & Limits → Cost](#cost--repolens-can-be-very-expensive) before raising either.
+
+- **`--depth N`** — within-lens iteration depth. The DONE-streak length the agent must reach (the agent outputs `DONE` as the first or last word `N` times consecutively) before the lens is considered complete. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for every other mode (including `bugreport`). Supersedes the legacy `DONE_STREAK_REQUIRED` env var (honored as a fallback when `--depth` is unset, deprecated). Must be between `1` and `19`.
+- **`--rounds N`** — multi-round investigation orchestrated by a meta-orchestrator that re-prioritizes lenses across rounds based on prior-round findings. Defaults to `1` for every pre-existing mode (single round, identical to pre-rounds runs); `bugreport` defaults to `3`. Per-mode caps: `audit`, `feature`, `bugfix`, `custom`, and `bugreport` accept `1`–`10`; `deploy`, `opensource`, `content`, and `discover` are locked to `1`.
+
+### Example invocations
+
+```bash
+# Deep audit — full parallel audit with raised within-lens depth
+./repolens.sh --project ~/my-app --agent claude --parallel --depth 5
+
+# Focused single-lens deep-dive — high depth on one lens
+./repolens.sh --project ~/my-app --agent claude --focus injection --depth 8
+
+# Full bugreport pipeline — symptom-driven multi-round investigation
+./repolens.sh --project ~/my-app --agent claude --mode bugreport --rounds 3 --i-know-this-is-expensive
+```
+
+### Cost discipline
+
+Any run with `--depth > 3` or `--rounds >= 2` should be guarded explicitly. Use these together:
+
+- `--max-cost <dollars>` — RepoLens warns if the lower-bound estimate exceeds the budget. Real runs typically cost 2–5× the lower bound.
+- `--i-know-this-is-expensive` — required for `--rounds >= 4`. Acknowledges the multiplicative cost of multi-round runs.
+- `--dry-run` — preview the resolved depth, rounds, and lens list before spending anything.
+
+See [METHODOLOGY.md](METHODOLOGY.md) for the design rationale behind within-lens depth, multi-round orchestration, the meta-orchestrator, and cross-lens linking.
+
 ## CLI Reference
 
 ```
@@ -278,7 +312,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 
 | Flag                   | Description                                                                                                                                                                                                                                                                                              |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mode <mode>`        | `audit` (default) \| `feature` \| `bugfix` \| `discover` \| `deploy` \| `custom` \| `opensource` \| `content`                                                                                                                                                                                            |
+| `--mode <mode>`        | `audit` (default) \| `feature` \| `bugfix` \| `bugreport` \| `discover` \| `deploy` \| `custom` \| `opensource` \| `content`                                                                                                                                                                            |
 | `--change <statement>` | Change impact statement (implies `--mode custom`)                                                                                                                                                                                                                                                        |
 | `--source <file>`      | Source material (PDF, text, markdown) for content creation or reference                                                                                                                                                                                                                                  |
 | `--logs <path>`        | Runtime log file or directory for the `logs` domain (path string only — agent reads it)                                                                                                                                                                                                                  |
@@ -291,12 +325,14 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--spec <file>`        | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB)                                                                                                                                                                                                                                           |
 | `--max-issues <n>`     | Stop after creating _n_ total issues                                                                                                                                                                                                                                                                     |
 | `--depth <n>`          | DONE streak depth per lens. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for all other modes. Must be between `1` and `19`                                                                                        |
-| `--rounds <n>`         | Validated cross-lens round count for upcoming multi-round orchestration. Defaults to `1`; `audit`, `feature`, `bugfix`, and `custom` accept `1`-`10`, while `deploy`, `opensource`, `content`, and `discover` are locked to `1`. The resolved value is shown by `--dry-run` and sizes the `logs/<run-id>/rounds/round-N/` artifact layout |
+| `--rounds <n>`         | Validated cross-lens round count for multi-round orchestration. Defaults to `1` for every pre-existing mode; `bugreport` defaults to `3`. `audit`, `feature`, `bugfix`, `custom`, and `bugreport` accept `1`-`10`; `deploy`, `opensource`, `content`, and `discover` are locked to `1`. `--rounds >= 4` requires `--i-know-this-is-expensive`. The resolved value is shown by `--dry-run` and sizes the `logs/<run-id>/rounds/round-N/` artifact layout |
 | `--local`              | Write findings as local markdown files instead of creating remote issues. No forge CLI required                                                                                                                                                                                                          |
 | `--output <path>`      | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/rounds/round-1/lens-outputs/`)                                                                                                                                                                                   |
 | `--forge <provider>`   | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea, `fj` for Forgejo/Codeberg. Codeberg is auto-detected; use this for self-hosted Gitea/Forgejo remotes whose hostname is not auto-detected. Self-hosted Forgejo needs an HTTPS or SSH `origin` remote so RepoLens can pass `fj -H <host>` |
 | `--hosted`             | Spin up Docker Compose for DAST scanning (used with `toolgate` domain)                                                                                                                                                                                                                                   |
 | `--max-cost <amount>`  | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly.                                                                   |
+| `--cross-link <mode>`  | Synthesizer cross-link strategy: `off` \| `comment` \| `suggest-reopen`. Controls whether the synthesizer links related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.                |
+| `--i-know-this-is-expensive` | Cost-acknowledgement gate required for `--rounds >= 4`. Does not bypass the `REPOLENS_MAX_ROUNDS` hard ceiling (default `5`). Equivalent to passing `--max-cost <budget>` together with `--yes`.                                                                                                  |
 | `--dry-run`            | Validate config and show which lenses would run, then exit (no agents executed)                                                                                                                                                                                                                          |
 | `--yes, -y`            | Skip confirmation prompt (for CI/automation)                                                                                                                                                                                                                                                             |
 | `--version`            | Show version and sponsor information, then exit                                                                                                                                                                                                                                                          |

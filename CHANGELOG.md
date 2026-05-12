@@ -23,7 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- `--rounds <n>` now accepts a validated cross-lens round count, honors `REPOLENS_ROUNDS` as a fallback with CLI precedence, applies per-mode caps (`audit`, `feature`, `bugfix`, and `custom` up to `10`; `deploy`, `opensource`, `content`, and `discover` locked to `1`), and shows the resolved value in `--dry-run` ([#140](https://github.com/TheMorpheus407/RepoLens/issues/140))
+- `--depth <n>` flag: within-lens iteration depth control — the DONE-streak length the agent must reach before a lens is considered complete. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for every other mode (including `bugreport`). Must be between `1` and `19`. Supersedes the legacy `DONE_STREAK_REQUIRED` env var (honored as a fallback when `--depth` is unset).
+- `bugreport` mode: symptom-driven multi-round bug-investigation pipeline. Requires `--bug-report <file|text>`; defaults to `--rounds 3` with the triage prefix phase enabled and the synthesizer's `--cross-link comment` strategy.
+- `--cross-link <mode>` flag: synthesizer cross-link strategy (`off` | `comment` | `suggest-reopen`) for linking related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.
+- `--rounds <n>` now accepts a validated cross-lens round count, honors `REPOLENS_ROUNDS` as a fallback with CLI precedence, applies per-mode caps (`audit`, `feature`, `bugfix`, `custom`, and `bugreport` up to `10`; `deploy`, `opensource`, `content`, and `discover` locked to `1`), refuses to launch at `--rounds >= 4` unless `--i-know-this-is-expensive` (or `--max-cost <dollars>` + `--yes`) is set, and shows the resolved value in `--dry-run` ([#140](https://github.com/TheMorpheus407/RepoLens/issues/140))
 - Runs now create an inspectable round artifact layout under `logs/<run-id>/rounds/round-N/` with round metadata, per-round lens outputs, completion barriers, and a top-level `final/` directory reserved for synthesis output ([#147](https://github.com/TheMorpheus407/RepoLens/issues/147))
 - `logs/lifecycle-violations` lens for detecting out-of-order lifecycle pairs, duplicate starts, duplicate terminals, swapped timestamps, and cross-worker lifecycle reordering in runtime logs supplied through `--logs` ([#141](https://github.com/TheMorpheus407/RepoLens/issues/141))
 - `logs/state-machine-violations` lens for detecting illegal, skipped, regressed, incompatible, or cross-component lifecycle states in runtime logs supplied through `--logs` ([#139](https://github.com/TheMorpheus407/RepoLens/issues/139))
@@ -47,11 +50,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `--local` flag: write findings as local markdown files instead of creating remote issues — no forge CLI required
 - `--output <path>` flag: custom output directory for local markdown files (requires `--local`; omitted output now defaults to `logs/<run-id>/rounds/round-1/lens-outputs/`)
 
+### Deprecated
+
+- `DONE_STREAK_REQUIRED` env var: superseded by `--depth`. The env var continues to work for the current release cycle (honored as a fallback when `--depth` is unset) and emits a deprecation warning at startup. Scheduled for removal in a future minor release (target version TBD, see the deprecation-policy ticket).
+
+### Backward compatibility
+
+- Defaults preserve all prior behavior: `--depth` defaults to the prior `3` for `audit` / `feature` / `bugfix` and `1` for every other mode (including the new `bugreport`); `--rounds` defaults to `1` for every pre-existing mode (single round, identical to pre-rounds runs), with `bugreport` defaulting to `3`; `bugreport` mode is opt-in; `--cross-link` defaults to `off` outside `bugreport`. Existing invocations work identically without any flag changes.
+
 ### Documentation
 
 - "Adding a Lens" section in README now links to CONTRIBUTING.md for the full contribution workflow (fork, branch, PR process)
 - `GOVERNANCE.md` documenting project leadership (BDFL model), decision-making, contribution acceptance criteria, conflict resolution, and governance evolution
 - Governance section in README linking to `GOVERNANCE.md`
+- New "Advanced controls" section in README covering `--depth`, `--rounds`, three realistic example invocations (deep audit, focused single-lens deep-dive, full bugreport pipeline), a cost-discipline note pointing at `--max-cost` / `--i-know-this-is-expensive` / `--dry-run`, and a pointer to METHODOLOGY.md
+- "Warnings & Limits → Cost" section now documents multiplicative `depth × rounds` scaling and the `--rounds >= 4` cost-acknowledgement gate (with the separate `REPOLENS_MAX_ROUNDS` hard ceiling)
 
 ### Compliance
 
