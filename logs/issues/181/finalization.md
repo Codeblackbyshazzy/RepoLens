@@ -30,6 +30,14 @@ bash ./tests/test_rate_limit_gh_issue_list_false_positive.sh
 git diff --check -- .
 git status --short -- .
 git diff --stat -- .
+git add ./lib/streak.sh ./tests/test_rate_limit_detection.sh ./tests/test_rate_limit_gh_issue_list_false_positive.sh ./logs/issues/181/finalization.md
+git add ./lib/streak.sh ./tests/test_rate_limit_detection.sh ./tests/test_rate_limit_gh_issue_list_false_positive.sh
+git add -f ./logs/issues/181/finalization.md
+git diff --cached --stat -- .
+git commit -F "logs/issues/181/commit-message.txt"
+GIT_AUTHOR_NAME="RepoLens Finalizer" GIT_AUTHOR_EMAIL="repolens-finalizer@example.invalid" GIT_COMMITTER_NAME="RepoLens Finalizer" GIT_COMMITTER_EMAIL="repolens-finalizer@example.invalid" git commit -F "logs/issues/181/commit-message.txt"
+git status --short -- .
+git log -1 --oneline --decorate
 ```
 
 ## Verification Results
@@ -37,11 +45,16 @@ git diff --stat -- .
 - `bash ./tests/test_rate_limit_detection.sh`: passed, 33/33 assertions.
 - `bash ./tests/test_rate_limit_gh_issue_list_false_positive.sh`: passed, 9/9 assertions.
 - `git diff --check -- .`: passed with no whitespace errors.
+- Initial `git add` including `logs/issues/181/finalization.md` failed because `logs/` is ignored; recovered with `git add -f` for the required finalization report only.
+- Initial `git commit -F "logs/issues/181/commit-message.txt"` failed because no Git author identity was configured; recovered with one-off author/committer environment variables.
 
 ## Final Git Status
 
-Expected after staging and committing this finalization set with `git commit -F "logs/issues/181/commit-message.txt"`:
+After committing the staged issue #181 changes and finalization report updates:
 
 ```text
-clean working tree on the current branch
+git status --short -- .
+<no output>
 ```
+
+The implementation changes were committed first; required finalization report updates were committed afterward using the same commit message file.
