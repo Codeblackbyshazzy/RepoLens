@@ -153,6 +153,16 @@ resolve_agent_kill_grace() {
   printf '%s\n' "${REPOLENS_AGENT_KILL_GRACE:-30}"
 }
 
+resolve_lens_max_wall() {
+  local value="${REPOLENS_LENS_MAX_WALL:-3600}"
+
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    die "REPOLENS_LENS_MAX_WALL must be a positive integer number of seconds"
+  fi
+
+  printf '%s\n' "$((10#$value))"
+}
+
 # Usage: run_agent <agent> <prompt> <project_path> [timeout_secs] [kill_grace_secs]
 #
 # Executes the given agent inside the target repository directory.

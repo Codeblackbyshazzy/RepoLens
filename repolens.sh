@@ -206,6 +206,9 @@ Environment:
   REPOLENS_AGENT_KILL_GRACE
                            Seconds after an agent timeout to wait after SIGTERM
                            before timeout(1) escalates to SIGKILL (default: 30).
+  REPOLENS_LENS_MAX_WALL   Per-lens wall-clock budget in seconds (default: 3600).
+                           Each agent invocation is capped to the remaining
+                           lens budget; exhausted lenses stop with max-wall.
   REPOLENS_RATE_LIMIT_MAX_SLEEP
                            Maximum parsed agent rate-limit wait in seconds
                            before falling back to abort behavior (default: 21600).
@@ -688,9 +691,15 @@ HYPOTHESES_TO_VERIFY_FILE=""
 
 AGENT_TIMEOUT_SECS="$(resolve_agent_timeout "$MODE")"
 AGENT_KILL_GRACE_SECS="$(resolve_agent_kill_grace)"
+LENS_MAX_WALL_SECS="$(resolve_lens_max_wall)"
+if [[ ! "$AGENT_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]]; then
+  die "REPOLENS_AGENT_TIMEOUT must resolve to a positive integer number of seconds"
+fi
+AGENT_TIMEOUT_SECS=$((10#$AGENT_TIMEOUT_SECS))
 if [[ ! "$AGENT_KILL_GRACE_SECS" =~ ^[0-9]+$ || "$AGENT_KILL_GRACE_SECS" -le 0 ]]; then
   die "REPOLENS_AGENT_KILL_GRACE must be a positive integer number of seconds"
 fi
+AGENT_KILL_GRACE_SECS=$((10#$AGENT_KILL_GRACE_SECS))
 RATE_LIMIT_MAX_SLEEP_SECS="${REPOLENS_RATE_LIMIT_MAX_SLEEP:-21600}"
 if [[ ! "$RATE_LIMIT_MAX_SLEEP_SECS" =~ ^[0-9]+$ ]]; then
   die "REPOLENS_RATE_LIMIT_MAX_SLEEP must be a non-negative integer number of seconds"
@@ -1089,6 +1098,7 @@ log_info "Project: $PROJECT_PATH ($REPO_OWNER/$REPO_NAME)"
 log_info "Agent: $AGENT | Mode: $MODE | Parallel: $PARALLEL"
 log_info "Agent timeout: ${AGENT_TIMEOUT_SECS}s"
 log_info "Agent timeout kill grace: ${AGENT_KILL_GRACE_SECS}s"
+log_info "Lens wall-clock budget: ${LENS_MAX_WALL_SECS}s"
 [[ -n "$SPEC_FILE" ]] && log_info "Spec: $SPEC_FILE"
 [[ -n "$MAX_ISSUES" ]] && log_info "Max issues: $MAX_ISSUES (DONE streak: 1)"
 [[ "$MODE" == "discover" ]] && log_info "Discover mode: single-pass brainstorming (DONE streak: 1)"
@@ -1948,8 +1958,20 @@ run_lens() {
   local exit_status="completed"
   local rate_limit_retry_attempted=false
   local rate_limit_sleep_seconds=0
+  local lens_start_epoch
+  lens_start_epoch="$(date +%s)"
 
   while true; do
+    local now_epoch elapsed_seconds remaining_wall_secs
+    now_epoch="$(date +%s)"
+    elapsed_seconds=$((now_epoch - lens_start_epoch))
+    remaining_wall_secs=$((LENS_MAX_WALL_SECS - elapsed_seconds))
+    if (( remaining_wall_secs <= 0 )); then
+      log_warn "[$domain/$lens_id] Hit lens wall-clock budget (${LENS_MAX_WALL_SECS}s elapsed). Stopping lens."
+      exit_status="max-wall"
+      break
+    fi
+
     iteration=$((iteration + 1))
     local timestamp
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -1962,11 +1984,16 @@ run_lens() {
     fi
 
     local agent_rc=0
-    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$AGENT_TIMEOUT_SECS" "$AGENT_KILL_GRACE_SECS" >"$output_file" 2>&1 || agent_rc=$?
+    local effective_timeout_secs="$AGENT_TIMEOUT_SECS"
+    if (( remaining_wall_secs < effective_timeout_secs )); then
+      effective_timeout_secs="$remaining_wall_secs"
+    fi
+
+    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" >"$output_file" 2>&1 || agent_rc=$?
     if [[ "$agent_rc" -eq 124 ]]; then
-      log_error "[$domain/$lens_id] agent timed out after ${AGENT_TIMEOUT_SECS}s and exited during ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
+      log_error "[$domain/$lens_id] agent timed out after ${effective_timeout_secs}s and exited during ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
     elif [[ "$agent_rc" -eq 137 ]]; then
-      log_error "[$domain/$lens_id] agent timed out after ${AGENT_TIMEOUT_SECS}s and was hard-killed after ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
+      log_error "[$domain/$lens_id] agent timed out after ${effective_timeout_secs}s and was hard-killed after ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
     elif [[ "$agent_rc" -ne 0 ]]; then
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
     fi
@@ -2062,6 +2089,14 @@ run_lens() {
         exit_status="max-issues"
         break
       fi
+    fi
+
+    now_epoch="$(date +%s)"
+    elapsed_seconds=$((now_epoch - lens_start_epoch))
+    if (( elapsed_seconds >= LENS_MAX_WALL_SECS )); then
+      log_warn "[$domain/$lens_id] Hit lens wall-clock budget (${LENS_MAX_WALL_SECS}s elapsed). Stopping lens."
+      exit_status="max-wall"
+      break
     fi
 
     # Safety cap: prevent runaway lenses

@@ -29,6 +29,9 @@
 # Contract for issue #113:
 #   5. Agent timeout wrappers pass --kill-after=<grace>s to timeout(1).
 #   6. REPOLENS_AGENT_KILL_GRACE defaults to 30s and is configurable.
+#
+# Contract for issue #183:
+#   7. REPOLENS_LENS_MAX_WALL defaults to 3600s and is configurable.
 
 set -uo pipefail
 
@@ -131,6 +134,7 @@ clear_timeout_env() {
   unset REPOLENS_AGENT_TIMEOUT_OPENSOURCE
   unset REPOLENS_AGENT_TIMEOUT_CONTENT
   unset REPOLENS_AGENT_KILL_GRACE
+  unset REPOLENS_LENS_MAX_WALL
 }
 
 resolve_timeout() {
@@ -147,6 +151,14 @@ resolve_kill_grace() {
     resolve_agent_kill_grace
   else
     printf '%s\n' "__missing_resolve_agent_kill_grace__"
+  fi
+}
+
+resolve_wall() {
+  if declare -F resolve_lens_max_wall >/dev/null 2>&1; then
+    resolve_lens_max_wall
+  else
+    printf '%s\n' "__missing_resolve_lens_max_wall__"
   fi
 }
 
@@ -242,6 +254,20 @@ else
 fi
 
 echo ""
+echo "=== REPOLENS_LENS_MAX_WALL default and override ==="
+
+if assert_function_exists "lib/core.sh exposes resolve_lens_max_wall" "resolve_lens_max_wall"; then
+  clear_timeout_env
+  assert_eq "Default lens wall-clock budget is 3600s" "3600" "$(resolve_wall)"
+
+  clear_timeout_env
+  export REPOLENS_LENS_MAX_WALL=42
+  assert_eq "Lens wall-clock budget override is honored" "42" "$(resolve_wall)"
+else
+  echo "  SKIP: lens wall resolver waits for resolve_lens_max_wall"
+fi
+
+echo ""
 echo "=== Timeout watchdog regressions ==="
 
 assert_count_at_least \
@@ -292,6 +318,21 @@ assert_match \
   "repolens.sh usage documents the timeout kill grace override" \
   "$REPO" \
   'REPOLENS_AGENT_KILL_GRACE'
+
+assert_match \
+  "README documents the lens wall-clock budget" \
+  "$README" \
+  'REPOLENS_LENS_MAX_WALL'
+
+assert_match \
+  "README documents the lens wall-clock budget default" \
+  "$README" \
+  'REPOLENS_LENS_MAX_WALL.*3600|3600.*REPOLENS_LENS_MAX_WALL'
+
+assert_match \
+  "repolens.sh usage documents the lens wall-clock budget" \
+  "$REPO" \
+  'REPOLENS_LENS_MAX_WALL'
 
 for mode_var in \
   REPOLENS_AGENT_TIMEOUT_AUDIT \
@@ -388,6 +429,7 @@ SH
 
   assert_eq "Kill grace is passed to timeout(1)" "--kill-after=2s 2s" "$first_timeout_args"
   assert_contains "Startup log includes configured kill grace" "Agent timeout kill grace: 2s" "$log_contents"
+  assert_contains "Startup log includes lens wall budget" "Lens wall-clock budget: 3600s" "$log_contents"
   assert_contains "Timeout log uses deploy mode-specific timeout" "agent timed out after 2s" "$log_contents"
 
   TOTAL=$((TOTAL + 1))

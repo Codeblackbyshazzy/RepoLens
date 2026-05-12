@@ -84,7 +84,7 @@ Runs started with `--max-issues` use an effective 1× streak so the issue budget
 
 **Why N=3 consecutive DONEs (in audit/feature/bugfix)?** A single DONE can be premature — the agent may have missed areas it has not yet explored. Requiring 3 consecutive DONEs forces the agent through at least 3 iterations where it genuinely finds nothing new, providing high confidence of completeness. If the agent discovers something on iteration k+1, the streak resets to 0 and the cycle continues.
 
-A safety cap of 20 iterations per lens prevents runaway loops regardless of DONE detection and regardless of `--depth`.
+A safety cap of 20 iterations per lens prevents fast runaway loops regardless of DONE detection and regardless of `--depth`. A separate per-lens wall-clock budget, `REPOLENS_LENS_MAX_WALL` (default 3600 seconds), prevents slow or timing-out iterations from occupying a sequential run or parallel worker slot for `MAX_ITERATIONS_PER_LENS × resolved agent timeout`; lenses stopped by that budget are recorded with summary status `max-wall`.
 
 ---
 
