@@ -1273,6 +1273,8 @@ FORGE_REPO_SLUG="$(forge_remote_repo_slug "$_origin_url")"
 if [[ -z "$FORGE_REPO_SLUG" ]]; then
   FORGE_REPO_SLUG="$REPO_OWNER/$REPO_NAME"
 fi
+# Filing and synthesize callbacks read FORGE_REPO directly; keep it on
+# the origin-derived slug so renamed checkouts do not file against basename.
 FORGE_REPO="$FORGE_REPO_SLUG"
 export FORGE_REPO
 
