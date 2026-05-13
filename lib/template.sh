@@ -43,6 +43,101 @@ read_spec_file() {
   sed "1s/^${bom}//" "$file" | tr -d '\r'
 }
 
+_template_repo_root() {
+  local source_file="${BASH_SOURCE[0]}"
+  local lib_dir
+  lib_dir="$(cd "$(dirname "$source_file")" && pwd)"
+  cd "$lib_dir/.." && pwd
+}
+
+_template_is_remote_server_deploy() {
+  local mode="$1" target_kind="$2" remote_target="$3"
+  [[ "$mode" == "deploy" && "$target_kind" == "server" && -n "$remote_target" ]]
+}
+
+_template_remote_execution_section() {
+  local remote_label="$1" root partial section
+  root="$(_template_repo_root)"
+  partial="$root/prompts/_base/_remote_execution.md"
+  [[ -f "$partial" ]] || return 0
+
+  section="$(cat "$partial")"
+  section="${section//\{\{REPOLENS_REMOTE_LABEL\}\}/$remote_label}"
+  printf '%s' "$section"
+}
+
+_template_local_server_investigation_section() {
+  cat <<'EOF'
+For server targets, recommended commands by category:
+
+**System Overview:**
+`uname -a`, `uptime`, `hostnamectl`, `cat /etc/os-release`, `lsb_release -a`, `timedatectl`, `cat /etc/hostname`
+
+**Processes & Services:**
+`ps aux`, `top -bn1`, `systemctl list-units --type=service --state=running`, `systemctl list-units --state=failed`, `systemctl status <service>`, `journalctl -u <service> --no-pager -n 100`
+
+**Logs:**
+`journalctl --no-pager -n 200`, `journalctl -p err --no-pager -n 100`, `ls -la /var/log/`, `tail -n 100 /var/log/syslog`, `tail -n 100 /var/log/auth.log`, `dmesg --no-pager | tail -50`
+
+**Network:**
+`ss -tlnp`, `ss -ulnp`, `ip addr`, `ip route`, `cat /etc/resolv.conf`, `iptables -L -n` (or `nft list ruleset`), `curl -sI http://localhost:<port>`
+
+**Disk:**
+`df -h`, `du -sh /var/log/*`, `lsblk`, `mount`, `cat /etc/fstab`, `iostat` (if available)
+
+**Memory:**
+`free -h`, `cat /proc/meminfo`, `vmstat 1 3`, `swapon --show`
+
+**Containers:**
+`docker ps -a`, `docker stats --no-stream`, `docker logs --tail 100 <container>`, `docker inspect <container>`, `docker-compose ps` (or `docker compose ps`)
+
+**TLS & Certificates:**
+`openssl s_client -connect localhost:443 </dev/null 2>/dev/null | openssl x509 -noout -dates -subject`, `find /etc/ssl /etc/letsencrypt -name '*.pem' -exec openssl x509 -noout -enddate -in {} \; 2>/dev/null`
+
+**Configuration:**
+`cat /etc/nginx/nginx.conf`, `cat /etc/nginx/sites-enabled/*`, `cat /etc/caddy/Caddyfile`, `env` (check for exposed secrets), `cat .env` (in project directory — check for insecure values)
+
+**Security:**
+`cat /etc/ssh/sshd_config`, `lastlog`, `last -n 20`, `cat /etc/passwd`, `cat /etc/shadow` (check permissions only), `find / -perm -4000 -type f 2>/dev/null` (SUID binaries), `cat /etc/sudoers`
+EOF
+}
+
+_template_remote_server_investigation_section() {
+  cat <<'EOF'
+For remote server targets, every recommended command below is pre-wrapped for SSH. Copy and adapt the command inside the single quotes; keep the `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET"` wrapper.
+
+**System Overview:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'uname -a'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'uptime'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'hostnamectl'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/os-release'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'lsb_release -a'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'timedatectl'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/hostname'`
+
+**Processes & Services:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ps aux'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'top -bn1'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'systemctl list-units --type=service --state=running'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'systemctl list-units --state=failed'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'systemctl status <service>'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'journalctl -u <service> --no-pager -n 100'`
+
+**Logs:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'journalctl --no-pager -n 200'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'journalctl -p err --no-pager -n 100'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ls -la /var/log/'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'tail -n 100 /var/log/syslog'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'tail -n 100 /var/log/auth.log'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'dmesg --no-pager | tail -50'`
+
+**Network:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ss -tlnp'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ss -ulnp'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ip addr'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'ip route'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/resolv.conf'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'iptables -L -n'` (or `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'nft list ruleset'`), `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'curl -sI http://localhost:<port>'`
+
+**Disk:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'df -h'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'du -sh /var/log/*'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'lsblk'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'mount'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/fstab'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'iostat'` (if available)
+
+**Memory:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'free -h'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /proc/meminfo'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'vmstat 1 3'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'swapon --show'`
+
+**Containers:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker ps -a'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker stats --no-stream'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker logs --tail 100 <container>'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker inspect <container>'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker-compose ps'` (or `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'docker compose ps'`)
+
+**TLS & Certificates:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'openssl s_client -connect localhost:443 </dev/null 2>/dev/null | openssl x509 -noout -dates -subject'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'find /etc/ssl /etc/letsencrypt -name '\''*.pem'\'' -exec openssl x509 -noout -enddate -in {} \; 2>/dev/null'`
+
+**Configuration:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/nginx/nginx.conf'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/nginx/sites-enabled/*'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/caddy/Caddyfile'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'env'` (check for exposed secrets), `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat .env'` (in project directory - check for insecure values)
+
+**Security:**
+`ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/ssh/sshd_config'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'lastlog'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'last -n 20'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/passwd'`, `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/shadow'` (check permissions only), `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'find / -perm -4000 -type f 2>/dev/null'` (SUID binaries), `ssh -S "$REPOLENS_REMOTE_SSH_SOCKET" "$REPOLENS_REMOTE_TARGET" 'cat /etc/sudoers'`
+EOF
+}
+
 _template_resolve_file_backed_value() {
   local key="$1" value="$2" path
 
@@ -167,6 +262,23 @@ compose_prompt() {
   prompt="${prompt//\{\{FORGE_ENHANCEMENT_LABEL_CREATE\}\}/$forge_enhancement_label_create}"
   prompt="${prompt//\{\{FORGE_ISSUE_LIST_OPEN\}\}/$forge_issue_list_open}"
   prompt="${prompt//\{\{FORGE_ISSUE_LIST_CLOSED\}\}/$forge_issue_list_closed}"
+
+  # Remote deploy rendering is built here instead of transported through
+  # vars_string, because the prompt section intentionally contains shell pipes.
+  local deploy_target_kind="${prompt_vars[REPOLENS_DEPLOY_TARGET_KIND]:-${prompt_vars[TARGET_TYPE]:-server}}"
+  local remote_target="${prompt_vars[REPOLENS_REMOTE_TARGET]:-}"
+  local remote_label="${prompt_vars[REPOLENS_REMOTE_LABEL]:-$remote_target}"
+  local remote_execution_section=""
+  local server_investigation_section=""
+  if _template_is_remote_server_deploy "$mode" "$deploy_target_kind" "$remote_target"; then
+    remote_execution_section="$(_template_remote_execution_section "$remote_label")"
+    server_investigation_section="$(_template_remote_server_investigation_section)"
+  else
+    server_investigation_section="$(_template_local_server_investigation_section)"
+  fi
+
+  prompt="${prompt//\{\{REMOTE_EXECUTION_SECTION\}\}/$remote_execution_section}"
+  prompt="${prompt//\{\{SERVER_INVESTIGATION_SECTION\}\}/$server_investigation_section}"
 
   # Step 3: Build round context section, then hold its prompt position.
   local round_context_section=""

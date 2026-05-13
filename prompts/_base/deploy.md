@@ -29,6 +29,8 @@ The following actions are **strictly forbidden**:
 
 If in doubt whether a command is read-only, **do not run it**.
 
+{{REMOTE_EXECUTION_SECTION}}
+
 ## Rules
 
 ### Issue Creation
@@ -84,37 +86,7 @@ aapt dump badging "$apk_path"
 unzip -l "$apk_path"
 ```
 
-For server targets, recommended commands by category:
-
-**System Overview:**
-`uname -a`, `uptime`, `hostnamectl`, `cat /etc/os-release`, `lsb_release -a`, `timedatectl`, `cat /etc/hostname`
-
-**Processes & Services:**
-`ps aux`, `top -bn1`, `systemctl list-units --type=service --state=running`, `systemctl list-units --state=failed`, `systemctl status <service>`, `journalctl -u <service> --no-pager -n 100`
-
-**Logs:**
-`journalctl --no-pager -n 200`, `journalctl -p err --no-pager -n 100`, `ls -la /var/log/`, `tail -n 100 /var/log/syslog`, `tail -n 100 /var/log/auth.log`, `dmesg --no-pager | tail -50`
-
-**Network:**
-`ss -tlnp`, `ss -ulnp`, `ip addr`, `ip route`, `cat /etc/resolv.conf`, `iptables -L -n` (or `nft list ruleset`), `curl -sI http://localhost:<port>`
-
-**Disk:**
-`df -h`, `du -sh /var/log/*`, `lsblk`, `mount`, `cat /etc/fstab`, `iostat` (if available)
-
-**Memory:**
-`free -h`, `cat /proc/meminfo`, `vmstat 1 3`, `swapon --show`
-
-**Containers:**
-`docker ps -a`, `docker stats --no-stream`, `docker logs --tail 100 <container>`, `docker inspect <container>`, `docker-compose ps` (or `docker compose ps`)
-
-**TLS & Certificates:**
-`openssl s_client -connect localhost:443 </dev/null 2>/dev/null | openssl x509 -noout -dates -subject`, `find /etc/ssl /etc/letsencrypt -name '*.pem' -exec openssl x509 -noout -enddate -in {} \; 2>/dev/null`
-
-**Configuration:**
-`cat /etc/nginx/nginx.conf`, `cat /etc/nginx/sites-enabled/*`, `cat /etc/caddy/Caddyfile`, `env` (check for exposed secrets), `cat .env` (in project directory — check for insecure values)
-
-**Security:**
-`cat /etc/ssh/sshd_config`, `lastlog`, `last -n 20`, `cat /etc/passwd`, `cat /etc/shadow` (check permissions only), `find / -perm -4000 -type f 2>/dev/null` (SUID binaries), `cat /etc/sudoers`
+{{SERVER_INVESTIGATION_SECTION}}
 
 {{SPEC_SECTION}}
 

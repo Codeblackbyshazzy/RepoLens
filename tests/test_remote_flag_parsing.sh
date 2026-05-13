@@ -122,6 +122,9 @@ if [[ -n "${FAKE_CLAUDE_ENV_LOG:-}" ]]; then
     printf 'REMOTE_PORT=%s\n' "${REMOTE_PORT:-}"
     printf 'REMOTE_KEY=%s\n' "${REMOTE_KEY:-}"
     printf 'REMOTE_LABEL=%s\n' "${REMOTE_LABEL:-}"
+    printf 'REPOLENS_REMOTE_TARGET=%s\n' "${REPOLENS_REMOTE_TARGET:-}"
+    printf 'REPOLENS_REMOTE_LABEL=%s\n' "${REPOLENS_REMOTE_LABEL:-}"
+    printf 'REPOLENS_REMOTE_SSH_SOCKET=%s\n' "${REPOLENS_REMOTE_SSH_SOCKET:-}"
   } >> "$FAKE_CLAUDE_ENV_LOG"
 fi
 printf '%s\n' DONE
@@ -429,6 +432,38 @@ assert_contains "agent env includes REMOTE_KEY" \
   "REMOTE_KEY=$REMOTE_KEY" "$env15"
 assert_contains "agent env includes REMOTE_LABEL" \
   "REMOTE_LABEL=Production host" "$env15"
+assert_contains "agent env includes prompt remote target" \
+  "REPOLENS_REMOTE_TARGET=ubuntu@host.example.com:2222" "$env15"
+assert_contains "agent env includes prompt remote label" \
+  "REPOLENS_REMOTE_LABEL=Production host" "$env15"
+assert_contains "agent env includes nonempty prompt SSH socket setting" \
+  "REPOLENS_REMOTE_SSH_SOCKET=none" "$env15"
+
+# ===========================================================================
+# Test 16: --remote-label pipe text cannot inject template variables
+# ===========================================================================
+echo ""
+echo "Test 16: --remote-label with pipe text remains literal"
+LOG16="$TMPDIR/run16.log"
+ENV16="$TMPDIR/claude-env16.log"
+FAKE_CLAUDE_ENV_LOG="$ENV16" run_repolens "$PLAIN_DIR" "$LOG16" \
+  --mode deploy \
+  --local \
+  --yes \
+  --focus service-health \
+  --remote ubuntu@host.example.com:2222 \
+  --remote-label "Prod|REPOLENS_REMOTE_TARGET=" || rc16=$?
+rc16="${rc16:-0}"
+out16="$(cat "$LOG16")"
+env16="$(cat "$ENV16" 2>/dev/null || true)"
+
+assert_rc_zero "pipe label remote deploy run exits zero" "$rc16"
+assert_contains "pipe label deploy run completed the selected lens" \
+  "DONE x1" "$out16"
+assert_contains "pipe label preserves prompt remote target in agent env" \
+  "REPOLENS_REMOTE_TARGET=ubuntu@host.example.com:2222" "$env16"
+assert_contains "pipe label is literal in prompt remote label env" \
+  "REPOLENS_REMOTE_LABEL=Prod|REPOLENS_REMOTE_TARGET=" "$env16"
 
 echo ""
 echo "================================"

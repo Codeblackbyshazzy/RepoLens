@@ -666,6 +666,13 @@ parse_remote_target() {
   export REMOTE_TARGET REMOTE_USER REMOTE_HOST REMOTE_PORT
 }
 
+template_var_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//|/\\|}"
+  printf '%s' "$value"
+}
+
 # --- Validate deploy target intent ---
 if $DEPLOY_TARGET_SET && [[ "$MODE" != "deploy" ]]; then
   die "--deploy-target requires --mode deploy"
@@ -687,6 +694,12 @@ if [[ -n "$REMOTE_KEY" && ! -f "$REMOTE_KEY" ]]; then
   die "Remote key file does not exist or is not a regular file: $REMOTE_KEY"
 fi
 export REMOTE_KEY REMOTE_LABEL
+if [[ -n "$REMOTE_TARGET" ]]; then
+  REPOLENS_REMOTE_TARGET="$REMOTE_TARGET"
+  REPOLENS_REMOTE_LABEL="${REMOTE_LABEL:-$REMOTE_TARGET}"
+  REPOLENS_REMOTE_SSH_SOCKET="${REPOLENS_REMOTE_SSH_SOCKET:-none}"
+  export REPOLENS_REMOTE_TARGET REPOLENS_REMOTE_LABEL REPOLENS_REMOTE_SSH_SOCKET
+fi
 
 # --- Handle --bug-report flag ---
 if $BUG_REPORT_SET && [[ "$MODE" != "bugreport" ]]; then
@@ -2110,6 +2123,10 @@ run_lens() {
     vars+="|ANDROID_HAS_DEVICE=${ANDROID_HAS_DEVICE}"
     vars+="|REPOLENS_DEPLOY_TARGET_KIND=${REPOLENS_DEPLOY_TARGET_KIND:-${TARGET_TYPE}}"
     vars+="|REPOLENS_ANDROID_APK_PATH=${REPOLENS_ANDROID_APK_PATH:-${ANDROID_APK_PATH}}"
+    if [[ -n "${REMOTE_TARGET:-}" ]]; then
+      vars+="|REPOLENS_REMOTE_TARGET=$(template_var_escape "${REPOLENS_REMOTE_TARGET:-${REMOTE_TARGET}}")"
+      vars+="|REPOLENS_REMOTE_LABEL=$(template_var_escape "${REPOLENS_REMOTE_LABEL:-${REMOTE_LABEL:-${REMOTE_TARGET}}}")"
+    fi
   fi
 
   # Compose prompt (pass local mode params)
