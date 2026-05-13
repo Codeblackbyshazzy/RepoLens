@@ -52,6 +52,8 @@ source "$SCRIPT_DIR/lib/triage.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/synthesize.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/filing.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/hosted.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/android.sh"
