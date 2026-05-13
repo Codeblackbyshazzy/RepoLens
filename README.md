@@ -337,7 +337,8 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--output <path>`      | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/rounds/round-1/lens-outputs/`)                                                                                                                                                                                   |
 | `--forge <provider>`   | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea, `fj` for Forgejo/Codeberg. Codeberg is auto-detected; use this for self-hosted Gitea/Forgejo remotes whose hostname is not auto-detected. Self-hosted Forgejo needs an HTTPS or SSH `origin` remote so RepoLens can pass `fj -H <host>` |
 | `--hosted`             | Spin up Docker Compose for DAST scanning (used with `toolgate` domain)                                                                                                                                                                                                                                   |
-| `--deploy-target <target>` | Deploy target resolver: `auto` (default), `server`, or `android`. Only valid with `--mode deploy`. `auto` selects Android only when RepoLens finds an APK or shallow Android source marker (`gradlew`, `build.gradle`, `build.gradle.kts`, `app/build.gradle`, or `app/build.gradle.kts`); otherwise it runs live-server deployment lenses. `server` skips Android detection and build handling. `android` requires an APK or shallow Android source marker. |
+| `--deploy-target <target>` | Deploy target resolver: `--deploy-target auto\|server\|android`, with `auto` as the default. Only valid with `--mode deploy`. `auto` opportunistically selects Android only for a direct APK, discovered APK, or shallow Android source marker (`gradlew`, `build.gradle`, `build.gradle.kts`, `app/build.gradle`, or `app/build.gradle.kts`); otherwise it preserves live-server deploy behavior. `server` skips Android detection and build handling. Only explicit `--deploy-target android` receives the no-source/no-APK Android exit when no APK or shallow marker exists. |
+| `--build-android-apk` | In Android deploy mode, allow the optional source build fallback to run `./gradlew assembleDebug` when no APK is already resolved. The fallback is gated behind deploy authorization and the normal run confirmation, and is never executed during `--dry-run`. |
 | `--max-cost <amount>`  | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly.                                                                   |
 | `--cross-link <mode>`  | Synthesizer cross-link strategy: `off` \| `comment` \| `suggest-reopen`. Controls whether the synthesizer links related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.                |
 | `--i-know-this-is-expensive` | Cost-acknowledgement gate required for `--rounds >= 4`. Does not bypass the `REPOLENS_MAX_ROUNDS` hard ceiling (default `5`). Equivalent to passing `--max-cost <budget>` together with `--yes`.                                                                                                  |
@@ -526,17 +527,18 @@ The `state` value is `running` during execution, then `finished` after a non-int
 
 1. Validates target repo, server, APK target, or Android source tree, agent CLI, and forge CLI auth (skipped with `--local`)
 2. Resolves lens list (all, `--domain`, `--focus`, or `--lens`) and creates the run artifact layout under `logs/<run-id>/`
-3. If `--dry-run`: prints mode, agent, project path, resolved round count, and the full lens list, then exits — no agents run and no prompts are shown
+3. If `--dry-run`: prints mode, agent, project path, resolved round count, and the full lens list, then exits — no agents run, no prompts are shown, and no Android Gradle build is executed
 4. For `--agent claude`: prompts for acknowledgment that `--dangerously-skip-permissions` only skips interactive permission prompts, not safety filters. `--yes` bypasses this prompt
 5. For `deploy` mode: resolves `--deploy-target auto|server|android`, then prompts for explicit authorization confirmation (`I confirm I am authorized to audit this server [y/N]`). Displays legal references (§202a StGB, CFAA, EU Directive 2013/40/EU). `--yes` bypasses this prompt
 6. Shows confirmation prompt (target repo, mode, lens count, estimated cost) — requires `y` to proceed, or use `--yes` to skip. For Android APK deploy targets, the prompt also shows the resolved APK path, detected package name or `unknown`, connected device status, `android` domain, queued lens count, and selected agent before `Proceed? [y/N]`. If no device is connected, dynamic lenses report no device and exit cleanly. If `--max-cost` is set and the estimate exceeds it, a warning is displayed
-7. Ensures remote labels exist (skipped with `--local`). For remote runs, RepoLens coordinates this startup step across concurrent runs against the same repository and skips repeated setup for the same desired label set while the label cache is fresh
-8. For each lens:
+7. For Android source deploy targets with no resolved APK, `--build-android-apk` may then run `./gradlew assembleDebug`. RepoLens uses debug builds rather than release builds because debug builds are the predictable local artifact most Gradle projects can produce without release keystores, Play signing, publishing credentials, minification, or other release-only paths.
+8. Ensures remote labels exist (skipped with `--local`). For remote runs, RepoLens coordinates this startup step across concurrent runs against the same repository and skips repeated setup for the same desired label set while the label cache is fresh
+9. For each lens:
    - Composes prompt from base template + lens expert focus
    - Runs agent in target repo directory
    - Agent reads code, finds issues, and creates remote issues (or writes markdown files in `--local` mode)
    - Loops until DONE detected (3× streak for audit/feature/bugfix, 1× for other modes)
-9. Writes `logs/<run-id>/status.json` while the run is active and generates `logs/<run-id>/summary.json`
+10. Writes `logs/<run-id>/status.json` while the run is active and generates `logs/<run-id>/summary.json`
 
 For a deeper look at the methodology — how lenses are composed, how agents iterate, and how streak detection works — see [METHODOLOGY.md](METHODOLOGY.md).
 
@@ -631,7 +633,7 @@ This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE
 
 ### Deploy Mode — Authorization Required
 
-`deploy` mode runs read-only inspection commands on a live server (e.g., `systemctl`, `journalctl`, `ss`, `df`). **You must have explicit authorization to audit the target server before running deploy mode.**
+`deploy` mode can target live servers, Android APK files, or shallow Android source trees. Live-server deploy runs read-only inspection commands (e.g., `systemctl`, `journalctl`, `ss`, `df`). Android deploy inspects the resolved APK or source tree. **You must have explicit authorization to audit the target before running deploy mode.**
 
 **Legal risk:** Running RepoLens deploy mode against infrastructure you do not own or are not explicitly authorized to audit may constitute a criminal offense, including but not limited to:
 
@@ -641,6 +643,10 @@ This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE
 - **United Kingdom:** Computer Misuse Act 1990
 
 RepoLens enforces read-only operation through prompt instructions, but **responsibility for authorization lies entirely with the user**. The CLI will prompt for explicit authorization confirmation before executing deploy mode. Using `--yes` to skip this prompt implies acceptance of this responsibility.
+
+Android source builds are the exception to read-only inspection. If you pass `--build-android-apk` for an Android source target with no resolved APK, RepoLens may execute the target-controlled `./gradlew assembleDebug` after deploy authorization and the normal run confirmation. That build never runs during `--dry-run`.
+
+For Android deploy prompts, `$REPOLENS_ANDROID_APK_PATH` exposes the resolved APK path to agents. The value comes from user input or files discovered inside the target project, so treat it as untrusted target-controlled data and quote it in shell usage, for example `aapt dump badging "$REPOLENS_ANDROID_APK_PATH"`.
 
 ### About `--dangerously-skip-permissions`
 

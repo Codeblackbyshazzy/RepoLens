@@ -132,7 +132,22 @@ The `--depth default` and `--rounds default` columns reflect the CLI defaults as
 
 Each mode uses its own severity schema (e.g., audit uses CRITICAL/HIGH/MEDIUM/LOW, discover uses SMALL/MEDIUM/LARGE/XL, custom uses BREAKING/REQUIRED/RECOMMENDED/OPTIONAL) and its own GitHub label format.
 
-Deploy mode is unique in that it does not require a git repository — it operates on live servers using system commands (systemctl, ss, df, journalctl) in a strictly read-only fashion, with explicit legal authorization gates.
+Deploy mode is unique in that it does not require a git repository. It can inspect a live server, a direct Android APK, a discovered APK, or a shallow Android source tree. Live-server deploy uses system commands (systemctl, ss, df, journalctl) in a strictly read-only fashion, with explicit legal authorization gates.
+
+### Deploy Target Resolution
+
+Deploy target resolution is intentionally ordered so `auto` remains conservative for server operators:
+
+1. RepoLens starts with `server` as the default target kind.
+2. If `--mode deploy` receives a direct `*.apk` path, `auto` and explicit `android` select the Android target and normalize the project path to the APK parent directory.
+3. Explicit `--deploy-target server` short-circuits Android detection and always keeps the `deployment` domain.
+4. For `auto` or explicit `android`, RepoLens searches for an APK under the target path, preferring normal Android build output locations before scanning for the newest `*.apk`.
+5. If no APK is found, RepoLens checks only shallow Android source markers: `gradlew`, `build.gradle`, `build.gradle.kts`, `app/build.gradle`, and `app/build.gradle.kts`.
+6. Only explicit `--deploy-target android` exits with the no-source/no-APK Android message when neither an APK nor a shallow marker exists. In `auto`, that same plain path preserves live-server deploy behavior.
+7. The resolved target kind selects either the `deployment` domain for servers or the `android` domain for Android targets.
+8. RepoLens exports the resolved metadata, including `$REPOLENS_ANDROID_APK_PATH` when an APK is known, for prompt composition and agent execution.
+
+The classification phase is pure filesystem probing; it must not execute target-controlled build tooling. Android source build fallback is deferred until after the dry-run exit point, deploy authorization, and the normal run confirmation. It also requires `--build-android-apk`, an Android target with no resolved APK, and shallow build markers. When those gates pass, RepoLens runs `./gradlew assembleDebug` rather than a release build because debug builds are the standard local inspection artifact and do not require release signing keys, Play signing, publishing credentials, or release-only packaging paths. `--dry-run` never runs Gradle or agents.
 
 ---
 
