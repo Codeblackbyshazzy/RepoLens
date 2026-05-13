@@ -1762,6 +1762,9 @@ ensure_labels() {
     content)     label_prefix="content" ;;
   esac
 
+  local label_set_file
+  label_set_file="$(mktemp 2>/dev/null)" || die "Unable to create temporary label bootstrap file"
+
   for lens_entry in "${LENS_LIST[@]}"; do
     local domain="${lens_entry%%/*}"
     local lens_id="${lens_entry#*/}"
@@ -1769,20 +1772,23 @@ ensure_labels() {
     local color
     color="$(jq -r --arg d "$domain" '.[$d] // "ededed"' "$COLORS_FILE")"
 
-    forge_label_create "$label" "$color" "$REPO_OWNER/$REPO_NAME"
+    printf '%s=%s\n' "$label" "$color" >> "$label_set_file"
   done
 
   # Ensure enhancement label for discover mode
   if [[ "$MODE" == "discover" ]]; then
-    forge_label_create "enhancement" "a2eeef" "$REPO_OWNER/$REPO_NAME"
+    printf '%s=%s\n' "enhancement" "a2eeef" >> "$label_set_file"
   fi
 
   if [[ -n "$SPEC_FILE" ]]; then
     local spec_basename
     spec_basename="$(basename "$SPEC_FILE" | sed 's/\.[^.]*$//')"
     local spec_label="spec:${spec_basename}"
-    forge_label_create "$spec_label" "c9b1ff" "$REPO_OWNER/$REPO_NAME"
+    printf '%s=%s\n' "$spec_label" "c9b1ff" >> "$label_set_file"
   fi
+
+  forge_label_bootstrap "$REPO_OWNER/$REPO_NAME" "$label_set_file"
+  rm -f "$label_set_file"
 
   log_info "Labels ready."
 }

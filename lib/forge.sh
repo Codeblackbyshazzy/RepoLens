@@ -461,6 +461,184 @@ forge_label_create() {
   esac
 }
 
+# forge_label_list_names <owner/repo>
+#   Prints existing label names one per line and returns 0 on success.
+#   On provider/parse failure, prints nothing and returns non-zero so callers
+#   can fall back to best-effort create-all behavior.
+forge_label_list_names() {
+  local repo="${1:-}"
+  [[ -n "$repo" ]] \
+    || die "forge_label_list_names: missing argument (repo='$repo')"
+
+  case "${FORGE_PROVIDER:-}" in
+    gh)
+      local gh_err gh_out gh_rc
+      gh_err="$(mktemp 2>/dev/null)" || gh_err=""
+      if [[ -n "$gh_err" ]]; then
+        gh_out="$(gh label list -R "$repo" --limit 1000 --json name 2>"$gh_err")"
+        gh_rc=$?
+      else
+        gh_out="$(gh label list -R "$repo" --limit 1000 --json name 2>/dev/null)"
+        gh_rc=$?
+      fi
+      if [[ "$gh_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$gh_err" && -s "$gh_err" ]]; then
+          first_err="$(head -n1 "$gh_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$gh_err" ]] && rm -f "$gh_err"
+        _forge_warn "forge_label_list_names: gh failed for repo=$repo rc=$gh_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$gh_err" ]] && rm -f "$gh_err"
+
+      if ! printf '%s' "$gh_out" | jq -r '.[].name // empty' 2>/dev/null; then
+        _forge_warn "forge_label_list_names: jq failed to parse gh output for repo=$repo"
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      _forge_warn "forge_label_list_names: unsupported provider '${FORGE_PROVIDER:-}'"
+      return 1
+      ;;
+  esac
+}
+
+_forge_label_cache_base_dir() {
+  if [[ -n "${REPOLENS_LABEL_CACHE_DIR:-}" ]]; then
+    printf '%s\n' "$REPOLENS_LABEL_CACHE_DIR"
+  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_CACHE_HOME/repolens/labels"
+  else
+    printf '%s\n' "${HOME:-.}/.cache/repolens/labels"
+  fi
+}
+
+_forge_label_set_hash() {
+  local label_set_file="${1:-}"
+  if command -v sha256sum >/dev/null 2>&1; then
+    LC_ALL=C sort "$label_set_file" | sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    LC_ALL=C sort "$label_set_file" | shasum -a 256 | awk '{print $1}'
+  else
+    LC_ALL=C sort "$label_set_file" | cksum | awk '{print $1 "-" $2}'
+  fi
+}
+
+_forge_label_cache_repo_key() {
+  local repo="${1:-}"
+  local provider="${FORGE_PROVIDER:-unknown}"
+  printf '%s/%s\n' "$provider" "$(printf '%s' "$repo" | sed 's#[^A-Za-z0-9._-]#_#g')"
+}
+
+_forge_label_sentinel_is_fresh() {
+  local sentinel="${1:-}" ttl="${REPOLENS_LABEL_CACHE_TTL:-600}"
+  [[ -n "$sentinel" && -f "$sentinel" ]] || return 1
+  [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=600
+  [[ "$ttl" -gt 0 ]] || return 1
+
+  local now modified age
+  now="$(date +%s 2>/dev/null || printf '0')"
+  modified="$(stat -c %Y "$sentinel" 2>/dev/null || printf '0')"
+  [[ "$now" =~ ^[0-9]+$ && "$modified" =~ ^[0-9]+$ ]] || return 1
+  age=$((now - modified))
+  [[ "$age" -ge 0 && "$age" -lt "$ttl" ]]
+}
+
+_forge_label_create_all_from_file() {
+  local repo="${1:-}" label_set_file="${2:-}"
+  local line label color
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    [[ "$line" == *=* ]] || continue
+    label="${line%%=*}"
+    color="${line#*=}"
+    [[ -n "$label" && -n "$color" ]] || continue
+    forge_label_create "$label" "$color" "$repo"
+  done < "$label_set_file"
+}
+
+_forge_label_bootstrap_unlocked() {
+  local repo="${1:-}" label_set_file="${2:-}"
+  local existing_out
+  if ! existing_out="$(forge_label_list_names "$repo")"; then
+    _forge_label_create_all_from_file "$repo" "$label_set_file"
+    return 0
+  fi
+
+  local -A existing=()
+  local existing_label
+  while IFS= read -r existing_label || [[ -n "$existing_label" ]]; do
+    [[ -n "$existing_label" ]] || continue
+    existing["$existing_label"]=1
+  done <<< "$existing_out"
+
+  local line label color
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    [[ "$line" == *=* ]] || continue
+    label="${line%%=*}"
+    color="${line#*=}"
+    [[ -n "$label" && -n "$color" ]] || continue
+    if [[ -z "${existing[$label]:-}" ]]; then
+      forge_label_create "$label" "$color" "$repo"
+    fi
+  done < "$label_set_file"
+}
+
+# forge_label_bootstrap <owner/repo> <label-set-file>
+#   Coordinates repository label seeding across concurrent RepoLens processes.
+#   The label-set file is newline-delimited label=color pairs. The helper lists
+#   existing labels once, creates only missing labels, and falls back to the
+#   existing best-effort create-all loop when listing is unavailable.
+forge_label_bootstrap() {
+  local repo="${1:-}" label_set_file="${2:-}"
+  [[ -n "$repo" && -n "$label_set_file" ]] \
+    || die "forge_label_bootstrap: missing argument (repo='$repo' label_set_file='$label_set_file')"
+  [[ -r "$label_set_file" ]] \
+    || die "forge_label_bootstrap: label_set_file '$label_set_file' not readable"
+
+  local cache_base repo_key cache_dir label_hash lock_file sentinel
+  cache_base="$(_forge_label_cache_base_dir)"
+  repo_key="$(_forge_label_cache_repo_key "$repo")"
+  cache_dir="$cache_base/$repo_key"
+  label_hash="$(_forge_label_set_hash "$label_set_file")"
+  lock_file="$cache_dir/bootstrap.lock"
+  sentinel="$cache_dir/$label_hash.seeded"
+
+  mkdir -p "$cache_dir" 2>/dev/null || {
+    _forge_label_bootstrap_unlocked "$repo" "$label_set_file" >/dev/null
+    return 0
+  }
+
+  if ! command -v flock >/dev/null 2>&1; then
+    if ! _forge_label_sentinel_is_fresh "$sentinel"; then
+      _forge_label_bootstrap_unlocked "$repo" "$label_set_file" >/dev/null
+      : > "$sentinel" 2>/dev/null || true
+    fi
+    return 0
+  fi
+
+  local lock_fd
+  exec {lock_fd}>"$lock_file" || {
+    _forge_label_bootstrap_unlocked "$repo" "$label_set_file" >/dev/null
+    return 0
+  }
+
+  if flock "$lock_fd"; then
+    if ! _forge_label_sentinel_is_fresh "$sentinel"; then
+      _forge_label_bootstrap_unlocked "$repo" "$label_set_file" >/dev/null
+      : > "$sentinel" 2>/dev/null || true
+    fi
+    flock -u "$lock_fd" 2>/dev/null || true
+  else
+    _forge_label_bootstrap_unlocked "$repo" "$label_set_file" >/dev/null
+  fi
+  exec {lock_fd}>&-
+  return 0
+}
+
 # forge_issue_list_count <owner/repo> <label>
 #   Counts open issues carrying <label> on the target repository.
 #   Prints the integer count on stdout and returns 0 on success.
