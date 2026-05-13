@@ -42,6 +42,8 @@ If in doubt whether a command is read-only, **do not run it**.
 - Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
 
+{{MIN_SEVERITY_SECTION}}
+
 ### Issue Sizing — ~1 Hour Rule
 Every issue MUST be scoped so that a human operator can complete it in approximately 1 hour.
 - If a finding can be remediated in ~1 hour: create a single issue.

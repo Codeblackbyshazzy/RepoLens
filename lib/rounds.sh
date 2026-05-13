@@ -1176,6 +1176,9 @@ build_round_digest() {
       _round_digest_warn "Skipping untrusted lens output $(basename "$file"): lens id is not registered"
       continue
     fi
+    if [[ -n "${REPOLENS_MIN_SEVERITY:-}" ]] && ! severity_meets_min "$severity" "$REPOLENS_MIN_SEVERITY"; then
+      continue
+    fi
 
     _round_digest_lens_counts["$lens"]=$(( ${_round_digest_lens_counts["$lens"]:-0} + 1 ))
     if [[ -n "${_round_digest_audit_domain_set[$domain]:-}" ]]; then

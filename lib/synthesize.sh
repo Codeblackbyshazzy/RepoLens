@@ -151,6 +151,79 @@ _synthesize_normalize_manifest_severities() {
   rm -f "$next"
 }
 
+# _synthesize_filter_manifest_min_severity <manifest_path> <min_severity> [verification_path]
+#   Filters create-issue manifest entries below the configured severity
+#   threshold. Comment cross-link actions attached to filtered entries are
+#   preserved in a sidecar consumed by lib/filing.sh, but only when the
+#   original entry would pass the same WRONG-source verification rule used for
+#   manifest entries.
+_synthesize_filter_manifest_min_severity() {
+  local manifest="${1:-}" min_severity="${2:-}" verification="${3:-}" tmp preserved preserved_tmp verification_json
+
+  [[ -n "$manifest" && -f "$manifest" ]] || return 2
+  [[ -n "$min_severity" ]] || return 0
+
+  min_severity="$(severity_normalize "$min_severity")"
+  [[ -n "$min_severity" ]] || return 2
+
+  tmp="${manifest}.filtered.$$"
+  preserved="$(dirname "$manifest")/cross-link-actions.preserved.json"
+  preserved_tmp="${preserved}.tmp.$$"
+  verification_json='[]'
+  if [[ -n "$verification" && -f "$verification" ]]; then
+    verification_json="$(jq -c '.' "$verification")" || {
+      rm -f "$tmp" "$preserved_tmp"
+      return 1
+    }
+  fi
+
+  if ! jq --arg min "$min_severity" '
+    def order: ["low","medium","high","critical"];
+    def rank($s): order | index($s);
+    [ .[] | select(rank(.severity) >= rank($min)) ]
+  ' "$manifest" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if ! jq --arg min "$min_severity" --argjson verification "$verification_json" '
+    def order: ["low","medium","high","critical"];
+    def rank($s): order | index($s);
+    def wrong_only_paths($v):
+      ([ $v[]? | select(.status == "WRONG") | .source_finding_path // empty ] | unique) as $wrong
+      | [ $v[]? | select(.status != "WRONG") | .source_finding_path // empty ] as $notwrong
+      | $wrong
+      | map(. as $p | select(($notwrong | index($p)) == null));
+    wrong_only_paths($verification) as $wrong_only
+    | [
+      .[]
+      | select(rank(.severity) < rank($min))
+      | . as $entry
+      | (($entry.source_finding_paths // []) | length) as $path_count
+      | ([($entry.source_finding_paths // [])[] | . as $path | select(($wrong_only | index($path)) != null)] | length) as $wrong_count
+      | select(($path_count == 0) or ($wrong_count != $path_count))
+      | $entry.cluster_id as $cid
+      | ($entry.cross_link_actions // [])[]
+      | select(.type == "comment")
+      | { cluster_id: $cid, source_finding_paths: ($entry.source_finding_paths // []), type, issue_number, body }
+    ]
+  ' "$manifest" > "$preserved_tmp"; then
+    rm -f "$tmp" "$preserved_tmp"
+    return 1
+  fi
+
+  if [[ "$(jq 'length' "$preserved_tmp" 2>/dev/null || echo 0)" == "0" ]]; then
+    rm -f "$preserved" "$preserved_tmp"
+  else
+    mv "$preserved_tmp" "$preserved" || {
+      rm -f "$tmp" "$preserved_tmp"
+      return 1
+    }
+  fi
+
+  mv "$tmp" "$manifest"
+}
+
 # _synthesize_title_ngrams <normalized_title>
 #   Emits one n-gram per line. Uses trigrams when the title has at least
 #   three tokens, bigrams for two tokens, and unigrams for one. Returns
@@ -534,6 +607,7 @@ run_synthesizer() {
   # This makes the "fatal validation leaves nothing consumable" guarantee
   # hold across every failure path, not just post-validation failures.
   rm -f "$final_dir/manifest.json"
+  rm -f "$final_dir/cross-link-actions.preserved.json"
 
   local total_findings=0
   if [[ -d "$rounds_dir" ]]; then
@@ -604,7 +678,18 @@ run_synthesizer() {
   if ! validate_manifest "$candidate"; then
     rm -f "$candidate"
     rm -f "$final_dir/manifest.json"
+    rm -f "$final_dir/cross-link-actions.preserved.json"
     return 1
+  fi
+
+  if [[ -n "${REPOLENS_MIN_SEVERITY:-}" ]]; then
+    if ! _synthesize_filter_manifest_min_severity "$candidate" "$REPOLENS_MIN_SEVERITY" "$final_dir/verification.json"; then
+      echo "run_synthesizer: failed to apply min-severity filter" >&2
+      rm -f "$candidate"
+      rm -f "$final_dir/manifest.json"
+      rm -f "$final_dir/cross-link-actions.preserved.json"
+      return 1
+    fi
   fi
 
   # Last line of defense: even if the synthesizer prompt is bypassed or buggy,
@@ -614,6 +699,7 @@ run_synthesizer() {
   if ! validate_manifest_against_verification "$candidate" "$final_dir/verification.json"; then
     rm -f "$candidate"
     rm -f "$final_dir/manifest.json"
+    rm -f "$final_dir/cross-link-actions.preserved.json"
     return 1
   fi
 

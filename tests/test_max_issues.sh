@@ -171,6 +171,39 @@ EOF
 result="$(count_issues_in_output "$TMPDIR/output-noise.txt")"
 assert_eq "only valid issue URL counted" "1" "$result"
 
+echo ""
+echo "Test 6b: count_dry_run_issues — min-severity filters before max count"
+dry_dir="$TMPDIR/dry-run-issues"
+mkdir -p "$dry_dir"
+cat > "$dry_dir/001-low.md" <<'EOF'
+---
+severity: low
+---
+# Low
+EOF
+cat > "$dry_dir/002-medium.md" <<'EOF'
+---
+severity: medium
+---
+# Medium
+EOF
+cat > "$dry_dir/003-high.md" <<'EOF'
+---
+severity: high
+---
+# High
+EOF
+cat > "$dry_dir/004-critical.md" <<'EOF'
+---
+severity: critical
+---
+# Critical
+EOF
+export REPOLENS_MIN_SEVERITY=high
+result="$(count_dry_run_issues "$dry_dir")"
+unset REPOLENS_MIN_SEVERITY
+assert_eq "only high and critical dry-run issues count" "2" "$result"
+
 # =====================================================================
 # compose_prompt with max_issues tests
 # =====================================================================

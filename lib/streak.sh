@@ -15,6 +15,11 @@
 
 # RepoLens — DONE streak detection
 
+if ! declare -F severity_normalize >/dev/null 2>&1; then
+  # shellcheck source=lib/core.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core.sh"
+fi
+
 # Strip ANSI escape sequences from stdin.
 # Uses a bash variable for the ESC byte instead of \x1b hex escapes in sed,
 # because BSD sed (macOS) does not support \x1b — only GNU sed does.
@@ -69,9 +74,33 @@ count_issues_in_output() {
 #   Counts .md files in a directory (maxdepth 1, no subdirectories).
 #   Returns count on stdout. Returns 0 if directory is empty or missing.
 count_dry_run_issues() {
-  local dir="$1"
+  local dir="$1" file severity count
   [[ -d "$dir" ]] || { echo 0; return 0; }
-  find "$dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | wc -l
+  if [[ -z "${REPOLENS_MIN_SEVERITY:-}" ]]; then
+    find "$dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | wc -l
+    return 0
+  fi
+
+  count=0
+  while IFS= read -r file; do
+    severity="$(
+      awk '
+        NR == 1 && $0 == "---" { in_fm = 1; next }
+        in_fm && $0 == "---" { exit }
+        in_fm && $0 ~ /^[[:space:]]*severity[[:space:]]*:/ {
+          sub(/^[[:space:]]*severity[[:space:]]*:[[:space:]]*/, "")
+          gsub(/^["'\''[:space:]]+|["'\''[:space:]]+$/, "")
+          print
+          exit
+        }
+      ' "$file"
+    )"
+    severity="$(severity_normalize "$severity")"
+    if [[ -n "$severity" ]] && severity_meets_min "$severity" "$REPOLENS_MIN_SEVERITY"; then
+      count=$((count + 1))
+    fi
+  done < <(find "$dir" -maxdepth 1 -name '*.md' -type f -print 2>/dev/null)
+  echo "$count"
 }
 
 # Rate-limit / quota / auth-failure signatures emitted by agent CLIs

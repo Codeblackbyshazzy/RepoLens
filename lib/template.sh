@@ -75,11 +75,12 @@ _template_resolve_file_backed_value() {
 #      {{FORGE_ENHANCEMENT_LABEL_CREATE}}, {{FORGE_ISSUE_LIST_OPEN}},
 #      {{FORGE_ISSUE_LIST_CLOSED}}
 #   6. Builds {{ROUND_CONTEXT_SECTION}} and holds it behind a sentinel
-#   7. Builds and substitutes {{MAX_ISSUES_SECTION}}
-#   8. Builds and substitutes {{LOCAL_MODE_SECTION}} (local markdown export override)
-#   9. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
-#  10. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
-#  11. Substitutes the held round markdown after all {{*_SECTION}} replacements
+#   7. Builds and substitutes {{MIN_SEVERITY_SECTION}}
+#   8. Builds and substitutes {{MAX_ISSUES_SECTION}}
+#   9. Builds and substitutes {{LOCAL_MODE_SECTION}} (local markdown export override)
+#  10. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
+#  11. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
+#  12. Substitutes the held round markdown after all {{*_SECTION}} replacements
 #   Variables string format: "KEY1=VALUE1|KEY2=VALUE2|..."
 #   Large round context values may be passed as KEY=@/path/to/file for
 #   PRIOR_ROUND_DIGEST and HYPOTHESES_TO_VERIFY so markdown pipes and
@@ -214,7 +215,17 @@ ${hypotheses_to_verify}
 
   prompt="${prompt//\{\{ROUND_CONTEXT_SECTION\}\}/$round_context_sentinel}"
 
-  # Step 4: Build and insert max-issues section
+  # Step 4: Build and insert min-severity section
+  local min_severity_section="" min_severity="${prompt_vars[MIN_SEVERITY]:-}"
+  if [[ -n "$min_severity" ]]; then
+    min_severity_section="## Minimum Severity
+
+Only create issues for findings whose severity is **${min_severity}** or higher. Do **not** call \`${forge_issue_create}\` for findings below this threshold; skip those findings instead. The severity order is: critical > high > medium > low."
+  fi
+
+  prompt="${prompt//\{\{MIN_SEVERITY_SECTION\}\}/$min_severity_section}"
+
+  # Step 5: Build and insert max-issues section
   local max_issues_section=""
   if [[ -n "$max_issues" ]]; then
     max_issues_section="## Issue Limit
@@ -226,7 +237,7 @@ This limit overrides the instruction to find all issues. Prioritize your finding
 
   prompt="${prompt//\{\{MAX_ISSUES_SECTION\}\}/$max_issues_section}"
 
-  # Step 4b: Build and insert local mode section
+  # Step 5b: Build and insert local mode section
   local local_mode_section=""
   if [[ "$local_mode" == "true" && -n "$local_output_dir" ]]; then
     local_mode_section="## LOCAL MODE OVERRIDE
@@ -281,7 +292,7 @@ Before writing a new finding, check if a file with a similar title already exist
 
   prompt="${prompt//\{\{LOCAL_MODE_SECTION\}\}/$local_mode_section}"
 
-  # Step 5: Build and insert source section
+  # Step 6: Build and insert source section
   local source_section=""
   if [[ -n "$source_file" && -f "$source_file" ]]; then
     local source_guidance=""
@@ -325,7 +336,7 @@ Read the source file using your file reading capabilities (cat, head, or equival
 
   prompt="${prompt//\{\{SOURCE_SECTION\}\}/$source_section}"
 
-  # Step 6: Build and insert hosted section
+  # Step 7: Build and insert hosted section
   local hosted_section=""
   if [[ "$hosted" == "true" ]]; then
     hosted_section="$(build_hosted_section)"
@@ -333,7 +344,7 @@ Read the source file using your file reading capabilities (cat, head, or equival
 
   prompt="${prompt//\{\{HOSTED_SECTION\}\}/$hosted_section}"
 
-  # Step 7 (LAST): Build and insert spec section
+  # Step 8 (LAST): Build and insert spec section
   # Done last so spec content is never subject to variable substitution
   spec_section=""
   if [[ -n "$spec_file" && -f "$spec_file" ]]; then

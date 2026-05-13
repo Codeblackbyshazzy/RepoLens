@@ -551,6 +551,90 @@ assert_eq "run_agent called exactly once" "1" "$agent_calls"
 assert_eq "compose_prompt called exactly once" "1" "$compose_calls"
 assert_contains "TOTAL_FINDINGS counts nested lens outputs" "TOTAL_FINDINGS=2" "$(cat "$COMPOSE_LOG")"
 
+# Min-severity filtering happens after schema validation, so valid
+# below-threshold entries are removed while invalid severities still fail.
+: > "$COMPOSE_LOG"
+: > "$AGENT_LOG"
+stub_compose_prompt
+run_agent() {
+  echo "call" >> "$AGENT_LOG"
+  cat <<'OUT'
+[
+  {
+    "cluster_id": "low::filtered",
+    "title": "[low] Tidy local docs wording",
+    "severity": "low",
+    "domain": "docs",
+    "lens": "readme-quality",
+    "root_cause_category": "docs-drift",
+    "source_finding_paths": ["logs/run-min-filter/rounds/round-1/lens-outputs/docs/readme-quality.md"],
+    "dedup_against_existing": [],
+    "proposed_labels": ["docs"],
+    "cross_link_actions": [],
+    "granularity": "independent",
+    "body": "body"
+  },
+  {
+    "cluster_id": "high::kept",
+    "title": "[high] Validate upload filenames before writing files",
+    "severity": "high",
+    "domain": "code",
+    "lens": "input-validation",
+    "root_cause_category": "missing-validation",
+    "source_finding_paths": ["logs/run-min-filter/rounds/round-1/lens-outputs/code/input-validation.md"],
+    "dedup_against_existing": [],
+    "proposed_labels": ["bug"],
+    "cross_link_actions": [],
+    "granularity": "independent",
+    "body": "body"
+  }
+]
+DONE
+OUT
+}
+
+setup_run "run-min-filter"
+export REPOLENS_MIN_SEVERITY=high
+run_synthesizer "run-min-filter" 2>"$TMPDIR/run-min-filter.err"
+status=$?
+unset REPOLENS_MIN_SEVERITY
+assert_success "run_synthesizer succeeds after min-severity filtering" "$status"
+assert_eq "post-validation filter keeps only high entry" "high::kept" "$(jq -r '.[].cluster_id' "$RUN_LOG/final/manifest.json")"
+
+: > "$COMPOSE_LOG"
+: > "$AGENT_LOG"
+stub_compose_prompt
+run_agent() {
+  echo "call" >> "$AGENT_LOG"
+  cat <<'OUT'
+[
+  {
+    "cluster_id": "urgent::invalid",
+    "title": "[urgent] Invalid severity must not be filtered away",
+    "severity": "urgent",
+    "domain": "code",
+    "lens": "input-validation",
+    "root_cause_category": "missing-validation",
+    "source_finding_paths": ["logs/run-min-invalid/rounds/round-1/lens-outputs/code/input-validation.md"],
+    "dedup_against_existing": [],
+    "proposed_labels": ["bug"],
+    "cross_link_actions": [],
+    "granularity": "independent",
+    "body": "body"
+  }
+]
+DONE
+OUT
+}
+
+setup_run "run-min-invalid"
+export REPOLENS_MIN_SEVERITY=high
+run_synthesizer "run-min-invalid" 2>"$TMPDIR/run-min-invalid.err"
+status=$?
+unset REPOLENS_MIN_SEVERITY
+assert_failure "invalid severity fails before min-severity filtering" "$status"
+assert_file_missing "invalid min-severity run does not promote manifest" "$RUN_LOG/final/manifest.json"
+
 # Failure path: agent emits invalid manifest (duplicate titles)
 : > "$COMPOSE_LOG"
 : > "$AGENT_LOG"

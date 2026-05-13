@@ -337,13 +337,15 @@ _filing_real_agent() {
 #   cross-link comment that references a non-existent new issue.
 _filing_cross_link_enact() {
   local run_id="${1:-}"
-  local log_base manifest filed_dir cross_dir
+  local log_base manifest preserved_actions verification filed_dir cross_dir
   log_base="$(_filing_log_base "$run_id")"
   manifest="$log_base/final/manifest.json"
+  preserved_actions="$log_base/final/cross-link-actions.preserved.json"
+  verification="$log_base/final/verification.json"
   filed_dir="$log_base/final/filed"
   cross_dir="$filed_dir/cross-link"
 
-  if [[ ! -f "$manifest" ]]; then
+  if [[ ! -f "$manifest" && ! -f "$preserved_actions" ]]; then
     return 0
   fi
 
@@ -355,18 +357,46 @@ _filing_cross_link_enact() {
   fi
   local reopen_label="${REPOLENS_REOPEN_LABEL:-repolens:reopen-candidate}"
 
-  # Build a flat list of (cluster_id, idx, type, issue_number, body) tuples
-  # in NUL-delimited form so multi-line bodies survive intact.
-  local tuples
-  tuples="$(jq -r '
-    to_entries[]
-    | .key as $i
-    | .value.cluster_id as $cid
-    | (.value.cross_link_actions // [])
-    | to_entries[]
-    | [$cid, .key, .value.type, (.value.issue_number | tostring), .value.body]
-    | @tsv
-  ' "$manifest" 2>/dev/null)" || return 0
+  # Build a flat list of (cluster_id, idx, type, issue_number, body) tuples.
+  local tuples manifest_tuples preserved_tuples verification_json
+  manifest_tuples=""
+  preserved_tuples=""
+  verification_json='[]'
+  if [[ -f "$manifest" ]]; then
+    manifest_tuples="$(jq -r '
+      to_entries[]
+      | .key as $i
+      | .value.cluster_id as $cid
+      | (.value.cross_link_actions // [])
+      | to_entries[]
+      | [$cid, .key, .value.type, (.value.issue_number | tostring), .value.body]
+      | @tsv
+    ' "$manifest" 2>/dev/null)" || manifest_tuples=""
+  fi
+  if [[ -f "$verification" ]]; then
+    verification_json="$(jq -c '.' "$verification" 2>/dev/null)" || verification_json='[]'
+  fi
+  if [[ -f "$preserved_actions" ]]; then
+    preserved_tuples="$(jq -r --argjson verification "$verification_json" '
+      def wrong_only_paths($v):
+        ([ $v[]? | select(.status == "WRONG") | .source_finding_path // empty ] | unique) as $wrong
+        | [ $v[]? | select(.status != "WRONG") | .source_finding_path // empty ] as $notwrong
+        | $wrong
+        | map(. as $p | select(($notwrong | index($p)) == null));
+      wrong_only_paths($verification) as $wrong_only
+      | to_entries[]
+      | .value as $action
+      | (($action.source_finding_paths // []) | length) as $path_count
+      | ([($action.source_finding_paths // [])[] | . as $path | select(($wrong_only | index($path)) != null)] | length) as $wrong_count
+      | select(($path_count == 0) or ($wrong_count != $path_count))
+      | [.value.cluster_id, .key, .value.type, (.value.issue_number | tostring), .value.body]
+      | @tsv
+    ' "$preserved_actions" 2>/dev/null)" || preserved_tuples=""
+  fi
+  tuples="$manifest_tuples"
+  if [[ -n "$preserved_tuples" ]]; then
+    tuples="${tuples:+$tuples$'\n'}$preserved_tuples"
+  fi
 
   if [[ -z "$tuples" ]]; then
     return 0
@@ -548,6 +578,13 @@ dispatch_filing_batch() {
   local entry_count
   entry_count="$(jq 'length' "$manifest")"
   if (( entry_count == 0 )); then
+    mkdir -p "$filed_dir" || {
+      echo "dispatch_filing_batch: cannot create filed dir: $filed_dir" >&2
+      return 1
+    }
+    if [[ "${CROSS_LINK_MODE:-off}" != "off" ]]; then
+      _filing_cross_link_enact "$run_id" || true
+    fi
     printf 'Filed: 0, Verification-failed: 0, Skipped-existing: 0\n'
     return 0
   fi

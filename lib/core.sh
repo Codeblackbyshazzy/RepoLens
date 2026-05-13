@@ -53,6 +53,33 @@ severity_normalize() {
   esac
 }
 
+# severity_rank <value>
+#   Maps canonical severities to an ordered numeric rank. Higher means more
+#   severe. Returns non-zero for invalid values.
+severity_rank() {
+  local severity
+  severity="$(severity_normalize "${1:-}")"
+
+  case "$severity" in
+    low) printf '0\n' ;;
+    medium) printf '1\n' ;;
+    high) printf '2\n' ;;
+    critical) printf '3\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# severity_meets_min <severity> <min>
+#   Returns success when <severity> is at or above the inclusive threshold.
+severity_meets_min() {
+  local severity_rank_value min_rank_value
+
+  severity_rank_value="$(severity_rank "${1:-}")" || return 1
+  min_rank_value="$(severity_rank "${2:-}")" || return 1
+
+  (( severity_rank_value >= min_rank_value ))
+}
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------

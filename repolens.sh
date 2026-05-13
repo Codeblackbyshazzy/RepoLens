@@ -117,6 +117,7 @@ Options:
   --resume <run-id>       Resume a previous interrupted run
   --spec <file>           Spec/PRD/roadmap to guide analysis (any text file)
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
+  --min-severity <level>  Only file findings at or above level: critical|high|medium|low
   --depth <n>             DONE streak depth per lens. Defaults: 3 for audit/feature/bugfix,
                            1 otherwise. Must be between 1 and 19.
   --rounds <n>            Cross-lens rounds (default: 1; capped per mode —
@@ -244,6 +245,8 @@ Environment:
                            is unset; must be between 1 and 19.
   REPOLENS_ROUNDS          Fallback for --rounds when the CLI flag is unset.
                            Must be a positive integer within the mode cap.
+  REPOLENS_MIN_SEVERITY    Fallback for --min-severity when the CLI flag is
+                           unset. Accepted values: critical, high, medium, low.
   REPOLENS_MAX_ROUNDS      Cross-mode hard ceiling for --rounds (default: 5).
                            --rounds >= REPOLENS_MAX_ROUNDS aborts unconditionally,
                            regardless of any CLI flag or --i-know-this-is-expensive
@@ -373,6 +376,7 @@ MAX_PARALLEL=8
 RESUME_RUN_ID=""
 SPEC_FILE=""
 MAX_ISSUES=""
+MIN_SEVERITY=""
 DEPTH=""
 DEPTH_SET=false
 ROUNDS=""
@@ -454,6 +458,11 @@ while [[ $# -gt 0 ]]; do
     --max-issues)
       [[ $# -ge 2 ]] || die "Option --max-issues requires a positive integer argument."
       MAX_ISSUES="$2"
+      shift 2
+      ;;
+    --min-severity)
+      [[ $# -ge 2 ]] || die "Option --min-severity requires an argument (critical|high|medium|low)."
+      MIN_SEVERITY="$2"
       shift 2
       ;;
     --depth)
@@ -643,6 +652,10 @@ elif [[ ${REPOLENS_ROUNDS+x} ]]; then
 else
   ROUNDS="$(mode_default_rounds "$MODE")"
   validate_rounds "$MODE" "$ROUNDS" "--rounds"
+fi
+
+if [[ -z "$MIN_SEVERITY" && ${REPOLENS_MIN_SEVERITY+x} ]]; then
+  MIN_SEVERITY="$REPOLENS_MIN_SEVERITY"
 fi
 
 # --- Cross-mode hard ceiling for --rounds (CI cost-runaway safety net) ---
@@ -1009,6 +1022,15 @@ if [[ -n "$MAX_ISSUES" ]]; then
   [[ "$MAX_ISSUES" =~ ^[1-9][0-9]*$ ]] || die "--max-issues must be a positive integer, got: $MAX_ISSUES"
 fi
 
+# --- Validate min-severity ---
+if [[ -n "$MIN_SEVERITY" ]]; then
+  MIN_SEVERITY_RAW="$MIN_SEVERITY"
+  MIN_SEVERITY="$(severity_normalize "$MIN_SEVERITY")"
+  [[ -n "$MIN_SEVERITY" ]] || die "--min-severity must be one of critical, high, medium, low; got: $MIN_SEVERITY_RAW"
+fi
+REPOLENS_MIN_SEVERITY="$MIN_SEVERITY"
+export REPOLENS_MIN_SEVERITY
+
 # --- Validate max-cost ---
 if [[ -n "$MAX_COST" ]]; then
   [[ "$MAX_COST" =~ ^[0-9]+\.?[0-9]*$ ]] || die "--max-cost must be a numeric value, got: $MAX_COST"
@@ -1203,6 +1225,7 @@ log_info "Agent timeout kill grace: ${AGENT_KILL_GRACE_SECS}s"
 log_info "Lens wall-clock budget: ${LENS_MAX_WALL_SECS}s"
 [[ -n "$SPEC_FILE" ]] && log_info "Spec: $SPEC_FILE"
 [[ -n "$MAX_ISSUES" ]] && log_info "Max issues: $MAX_ISSUES (DONE streak: 1)"
+[[ -n "$MIN_SEVERITY" ]] && log_info "Min severity: $MIN_SEVERITY"
 [[ "$MODE" == "discover" ]] && log_info "Discover mode: single-pass brainstorming (DONE streak: 1)"
 [[ "$MODE" == "deploy" ]] && log_info "Deploy mode: single-pass server audit (DONE streak: 1)"
 if [[ "$MODE" == "deploy" && "${TARGET_TYPE:-server}" == "android" && -n "${ANDROID_APK_PATH:-}" ]]; then
@@ -1974,6 +1997,7 @@ run_lens() {
   vars+="|LENS_LABEL=${lens_label}"
   vars+="|MODE=${MODE}"
   vars+="|RUN_ID=${RUN_ID}"
+  vars+="|MIN_SEVERITY=${MIN_SEVERITY}"
   vars+="|REPO_NAME=${REPO_NAME}"
   vars+="|REPO_OWNER=${REPO_OWNER}"
   vars+="|FORGE_REPO_SLUG=${FORGE_REPO_SLUG}"
