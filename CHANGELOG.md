@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- `--deploy-target auto|server|android` for deploy mode. `auto` remains the default and falls back to live-server deployment lenses unless an APK or shallow Android source marker is found; `server` skips Android detection and build handling; `android` requires an APK or shallow Android source tree ([#188](https://github.com/TheMorpheus407/RepoLens/issues/188)).
 - `--depth <n>` flag: within-lens iteration depth control — the DONE-streak length the agent must reach before a lens is considered complete. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for every other mode (including `bugreport`). Must be between `1` and `19`. Supersedes the legacy `DONE_STREAK_REQUIRED` env var (honored as a fallback when `--depth` is unset).
 - `bugreport` mode: symptom-driven multi-round bug-investigation pipeline. Requires `--bug-report <file|text>`; defaults to `--rounds 3` with the triage prefix phase enabled and the synthesizer's `--cross-link comment` strategy.
 - `--cross-link <mode>` flag: synthesizer cross-link strategy (`off` | `comment` | `suggest-reopen`) for linking related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.

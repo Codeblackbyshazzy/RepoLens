@@ -136,6 +136,8 @@ Options:
   --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --forge <provider>      gh (GitHub) | tea (Gitea) | fj (Forgejo/Codeberg) — overrides auto-detection from origin
   --hosted                Spin up project's Docker Compose in isolated network for DAST scanning and testing
+  --deploy-target <target>
+                          Deploy mode target: auto (default) | server | android
   --build-android-apk     In deploy mode, explicitly allow building Android source with ./gradlew assembleDebug
   --yes, -y               Skip confirmation prompt (for CI/automation)
   --max-cost <amount>     Warn if min. cost estimate exceeds this dollar amount (real cost typically 2–5x higher)
@@ -160,6 +162,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --mode discover --focus monetization
   repolens.sh --project https://github.com/org/repo.git --agent claude --max-issues 3
   repolens.sh --project /srv/myapp --agent claude --mode deploy
+  repolens.sh --project /srv/myapp --agent claude --mode deploy --deploy-target server
   repolens.sh --project /srv/myapp --agent claude --mode deploy --focus tls-certificates
   repolens.sh --project /srv/myapp --agent claude --mode deploy --parallel --max-issues 5
   repolens.sh --project ~/myapp --agent claude --change "Switching from REST to GraphQL"
@@ -391,6 +394,8 @@ MAX_COST=""
 EXPENSIVE_ACK=false
 DRY_RUN=false
 LOCAL_MODE=false
+DEPLOY_TARGET="auto"
+DEPLOY_TARGET_SET=false
 BUILD_ANDROID_APK=false
 OUTPUT_DIR=""
 OUTPUT_DIR_SET=false
@@ -524,6 +529,12 @@ while [[ $# -gt 0 ]]; do
       LOCAL_MODE=true
       shift
       ;;
+    --deploy-target)
+      [[ $# -ge 2 ]] || die "Option --deploy-target requires an argument."
+      DEPLOY_TARGET="$2"
+      DEPLOY_TARGET_SET=true
+      shift 2
+      ;;
     --build-android-apk)
       BUILD_ANDROID_APK=true
       shift
@@ -592,6 +603,15 @@ fi
 case "$MODE" in
   audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content) ;;
   *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', or 'content')" ;;
+esac
+
+# --- Validate deploy target intent ---
+if $DEPLOY_TARGET_SET && [[ "$MODE" != "deploy" ]]; then
+  die "--deploy-target requires --mode deploy"
+fi
+case "$DEPLOY_TARGET" in
+  auto|server|android) ;;
+  *) die "Invalid --deploy-target: $DEPLOY_TARGET (expected auto, server, or android)" ;;
 esac
 
 # --- Handle --bug-report flag ---
@@ -790,8 +810,10 @@ fi
 
 # --- Deploy target dispatch state (issue #88) ---
 # Deploy mode dispatches between two targets:
-#   - server : live host inspection (default; uses the `deployment` domain)
-#   - android: APK audit               (uses the `android` domain)
+#   - server : live host inspection (uses the `deployment` domain)
+#   - android: APK/source audit      (uses the `android` domain)
+#   - auto   : android only when an APK or shallow source marker is detected;
+#              otherwise server
 # TRUST BOUNDARY: classification must not execute project-controlled build
 # tooling (gradlew, gradle, mvnw, etc.) unless the caller explicitly opted in
 # with --build-android-apk. APK discovery and source marker checks are pure
@@ -804,17 +826,22 @@ ANDROID_DEVICE_ID=""
 ANDROID_DEVICE_MODEL=""
 ANDROID_BUILT_FROM_SOURCE="false"
 ANDROID_SOURCE_BUILDABLE="false"
+NO_ANDROID_TARGET_MSG="No APK found and project does not appear to be an Android source tree (no build.gradle / gradlew). Either supply a project containing an APK, an Android source tree, or use --mode deploy with a server target."
 
 # --- Validate project is a git repo ---
 _orig_project="$PROJECT_PATH"
 # Deploy mode also accepts a direct path to a pre-built .apk file. Resolve
-# it, pin the Android target now, and rebase PROJECT_PATH onto the APK's
-# parent directory so downstream `cd "$PROJECT_PATH"` continues to work.
+# it for auto/android targets, and rebase PROJECT_PATH onto the APK's parent
+# directory so downstream `cd "$PROJECT_PATH"` continues to work. An explicit
+# server target uses the parent directory but deliberately skips Android
+# handling.
 if [[ "$MODE" == "deploy" && -f "$PROJECT_PATH" && "$PROJECT_PATH" == *.apk ]]; then
   _apk_dir="$(cd "$(dirname "$PROJECT_PATH")" 2>/dev/null && pwd)" || die "Cannot access project path: $_orig_project"
-  ANDROID_APK_PATH="$_apk_dir/$(basename "$PROJECT_PATH")"
   PROJECT_PATH="$_apk_dir"
-  TARGET_TYPE="android"
+  if [[ "$DEPLOY_TARGET" != "server" ]]; then
+    ANDROID_APK_PATH="$_apk_dir/$(basename "$_orig_project")"
+    TARGET_TYPE="android"
+  fi
   unset _apk_dir
 else
   PROJECT_PATH="$(cd "$PROJECT_PATH" 2>/dev/null && pwd)" || die "Cannot access project path: $_orig_project"
@@ -823,29 +850,36 @@ if [[ "$MODE" != "deploy" ]]; then
   git -C "$PROJECT_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Not a git repository: $PROJECT_PATH"
 fi
 
-# --- Classify deploy target (auto) ---
-# Skip when --project pointed at an .apk file (target already pinned above).
-# Step 1: discover_android_apk only walks the filesystem looking for *.apk;
-# it never invokes build tools.
-# Step 2: when no APK exists but the tree looks like an Android source project,
-# use the shared shallow classifier so all marker forms follow lib/android.sh's
-# contract. Building remains behind --build-android-apk; --dry-run and --yes by
-# themselves never ask the helper to run.
-if [[ "$MODE" == "deploy" && "$TARGET_TYPE" != "android" ]]; then
-  _discovered_apk="$(discover_android_apk "$PROJECT_PATH" 2>/dev/null || true)"
-  if [[ -n "$_discovered_apk" ]]; then
-    ANDROID_APK_PATH="$_discovered_apk"
-    TARGET_TYPE="android"
+# --- Classify deploy target ---
+# Explicit server skips all Android discovery, marker checks, and build
+# handling. Auto and explicit Android use only pure filesystem probes for
+# classification; optional source builds remain behind --build-android-apk and
+# never demote an already selected Android target back to server.
+if [[ "$MODE" == "deploy" && "$DEPLOY_TARGET" != "server" ]]; then
+  if [[ "$TARGET_TYPE" != "android" ]]; then
+    _discovered_apk="$(discover_android_apk "$PROJECT_PATH" 2>/dev/null || true)"
+    if [[ -n "$_discovered_apk" ]]; then
+      ANDROID_APK_PATH="$_discovered_apk"
+      TARGET_TYPE="android"
+    fi
+    unset _discovered_apk
   fi
-  unset _discovered_apk
+
   if [[ -z "$ANDROID_APK_PATH" ]] && android_project_appears_buildable "$PROJECT_PATH"; then
     ANDROID_SOURCE_BUILDABLE="true"
+    TARGET_TYPE="android"
   fi
-  if [[ "$ANDROID_SOURCE_BUILDABLE" == "true" ]] && ! $DRY_RUN && $BUILD_ANDROID_APK; then
+
+  if [[ "$DEPLOY_TARGET" == "android" && "$TARGET_TYPE" != "android" ]]; then
+    printf '%s\n' "$NO_ANDROID_TARGET_MSG"
+    exit 0
+  fi
+
+  if [[ "$TARGET_TYPE" == "android" && -z "$ANDROID_APK_PATH" \
+        && "$ANDROID_SOURCE_BUILDABLE" == "true" ]] && ! $DRY_RUN && $BUILD_ANDROID_APK; then
     if declare -F build_android_apk >/dev/null 2>&1; then
       ANDROID_APK_PATH="$(build_android_apk "$PROJECT_PATH" 2>/dev/null || true)"
       if [[ -n "$ANDROID_APK_PATH" ]]; then
-        TARGET_TYPE="android"
         ANDROID_BUILT_FROM_SOURCE="true"
       fi
     fi

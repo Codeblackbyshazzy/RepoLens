@@ -205,7 +205,7 @@ RepoLens supports 8 modes. Each mode controls which domains/lenses are visible a
 | `feature`    | 3×          | 27 code/toolgate/logs domains (248 lenses) | Feature gap discovery — identifies missing capabilities                       |
 | `bugfix`     | 3×          | 27 code/toolgate/logs domains (248 lenses) | Bug hunting — finds real bugs and defects                                     |
 | `discover`   | 1×          | `discovery` domain (14 lenses)             | Product discovery — brainstorming for product strategy                        |
-| `deploy`     | 1×          | `deployment` domain (26 lenses) or `android` domain (17 lenses) | Server or Android audit — inspects a live server or APK target; source static analysis runs when that Android target includes a Gradle source tree |
+| `deploy`     | 1×          | `deployment` domain (26 lenses) or `android` domain (17 lenses) | Server or Android audit — inspects a live server, APK target, or shallow Gradle Android source tree |
 | `custom`     | 1×          | 27 code/toolgate/logs domains (248 lenses) | Change impact analysis — identifies what needs adapting after a change        |
 | `opensource` | 1×          | `open-source-readiness` domain (13 lenses) | Open-source readiness — checks if a repo can go public safely                 |
 | `content`    | 1×          | `content-quality` domain (17 lenses)       | Content audit & creation — audits or creates content from `--source` material |
@@ -228,8 +228,14 @@ RepoLens supports 8 modes. Each mode controls which domains/lenses are visible a
 # Deploy — audit a live server (read-only)
 ./repolens.sh --project /srv/myapp --agent claude --mode deploy --parallel --max-issues 5
 
+# Deploy — force live-server lenses even if Android files are present
+./repolens.sh --project /srv/myapp --agent claude --mode deploy --deploy-target server
+
 # Deploy — audit an Android APK target
 ./repolens.sh --project ~/my-app/app/build/outputs/apk/debug/app-debug.apk --agent claude --mode deploy
+
+# Deploy — audit an Android source tree when no APK is built yet
+./repolens.sh --project ~/my-android-app --agent claude --mode deploy --deploy-target android
 
 # Custom — change impact analysis
 ./repolens.sh --project ~/my-app --agent claude --change "Switching from REST to GraphQL"
@@ -331,6 +337,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--output <path>`      | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/rounds/round-1/lens-outputs/`)                                                                                                                                                                                   |
 | `--forge <provider>`   | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea, `fj` for Forgejo/Codeberg. Codeberg is auto-detected; use this for self-hosted Gitea/Forgejo remotes whose hostname is not auto-detected. Self-hosted Forgejo needs an HTTPS or SSH `origin` remote so RepoLens can pass `fj -H <host>` |
 | `--hosted`             | Spin up Docker Compose for DAST scanning (used with `toolgate` domain)                                                                                                                                                                                                                                   |
+| `--deploy-target <target>` | Deploy target resolver: `auto` (default), `server`, or `android`. Only valid with `--mode deploy`. `auto` selects Android only when RepoLens finds an APK or shallow Android source marker (`gradlew`, `build.gradle`, `build.gradle.kts`, `app/build.gradle`, or `app/build.gradle.kts`); otherwise it runs live-server deployment lenses. `server` skips Android detection and build handling. `android` requires an APK or shallow Android source marker. |
 | `--max-cost <amount>`  | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly.                                                                   |
 | `--cross-link <mode>`  | Synthesizer cross-link strategy: `off` \| `comment` \| `suggest-reopen`. Controls whether the synthesizer links related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.                |
 | `--i-know-this-is-expensive` | Cost-acknowledgement gate required for `--rounds >= 4`. Does not bypass the `REPOLENS_MAX_ROUNDS` hard ceiling (default `5`). Equivalent to passing `--max-cost <budget>` together with `--yes`.                                                                                                  |
@@ -517,11 +524,11 @@ The `state` value is `running` during execution, then `finished` after a non-int
 
 ## How It Works
 
-1. Validates target repo, server, or APK target, agent CLI, and forge CLI auth (skipped with `--local`)
+1. Validates target repo, server, APK target, or Android source tree, agent CLI, and forge CLI auth (skipped with `--local`)
 2. Resolves lens list (all, `--domain`, `--focus`, or `--lens`) and creates the run artifact layout under `logs/<run-id>/`
 3. If `--dry-run`: prints mode, agent, project path, resolved round count, and the full lens list, then exits — no agents run and no prompts are shown
 4. For `--agent claude`: prompts for acknowledgment that `--dangerously-skip-permissions` only skips interactive permission prompts, not safety filters. `--yes` bypasses this prompt
-5. For `deploy` mode: prompts for explicit authorization confirmation (`I confirm I am authorized to audit this server [y/N]`). Displays legal references (§202a StGB, CFAA, EU Directive 2013/40/EU). `--yes` bypasses this prompt
+5. For `deploy` mode: resolves `--deploy-target auto|server|android`, then prompts for explicit authorization confirmation (`I confirm I am authorized to audit this server [y/N]`). Displays legal references (§202a StGB, CFAA, EU Directive 2013/40/EU). `--yes` bypasses this prompt
 6. Shows confirmation prompt (target repo, mode, lens count, estimated cost) — requires `y` to proceed, or use `--yes` to skip. For Android APK deploy targets, the prompt also shows the resolved APK path, detected package name or `unknown`, connected device status, `android` domain, queued lens count, and selected agent before `Proceed? [y/N]`. If no device is connected, dynamic lenses report no device and exit cleanly. If `--max-cost` is set and the estimate exceeds it, a warning is displayed
 7. Ensures remote labels exist (skipped with `--local`). For remote runs, RepoLens coordinates this startup step across concurrent runs against the same repository and skips repeated setup for the same desired label set while the label cache is fresh
 8. For each lens:
