@@ -574,6 +574,10 @@ start_status_updater() {
   write_status_snapshot "running" "$run_id" "$log_base" "$heartbeat_dir" "$completed_file" "$summary_file" "$project" "$repo" "$mode" "$agent" "$parallel" "$max_parallel" "$STATUS_LENSES_FILE" "$remote_target" "$remote_label" || true
 
   local updater_cmd=(bash -c '
+    if [[ -n "${REPOLENS_RUN_LOCK_FD:-}" ]]; then
+      exec {REPOLENS_RUN_LOCK_FD}>&-
+      unset REPOLENS_RUN_LOCK_FD
+    fi
     source "$1"
     source "$2"
     init_logging "$5" "$6"

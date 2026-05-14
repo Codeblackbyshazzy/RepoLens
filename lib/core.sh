@@ -261,6 +261,10 @@ run_agent() {
     # failure, login wizard) exit quickly instead of blocking on a read
     # that will never deliver input.
     exec </dev/null
+    if [[ -n "${REPOLENS_RUN_LOCK_FD:-}" ]]; then
+      exec {REPOLENS_RUN_LOCK_FD}>&-
+      unset REPOLENS_RUN_LOCK_FD
+    fi
 
     case "$agent" in
       claude)

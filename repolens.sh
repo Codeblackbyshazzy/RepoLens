@@ -86,6 +86,28 @@ show_about() {
   fi
 }
 
+acquire_run_lock() {
+  local lock_file holder
+
+  [[ -n "${RUN_ID:-}" && -n "${LOG_BASE:-}" ]] || die "Run lock requires RUN_ID and LOG_BASE"
+  mkdir -p "$LOG_BASE" || die "Unable to create run directory: $LOG_BASE"
+
+  command -v flock >/dev/null 2>&1 || die "flock is required to guard run $RUN_ID against concurrent resume"
+
+  lock_file="$LOG_BASE/.repolens.flock"
+  exec {REPOLENS_RUN_LOCK_FD}>"$lock_file" || die "Unable to open run lock: $lock_file"
+  export REPOLENS_RUN_LOCK_FD
+
+  if ! flock -n "$REPOLENS_RUN_LOCK_FD"; then
+    holder=""
+    if command -v fuser >/dev/null 2>&1; then
+      holder="$(fuser "$lock_file" 2>/dev/null | tr -s ' ' ' ' | sed 's/^ *//;s/ *$//' || true)"
+    fi
+    [[ -n "$holder" ]] || holder="unknown"
+    die "Another repolens process (PID $holder) already owns run $RUN_ID"
+  fi
+}
+
 # --- Usage ---
 usage() {
   cat <<'EOF'
@@ -1340,7 +1362,7 @@ fi
 # --- Directories ---
 LOG_BASE="$SCRIPT_DIR/logs/$RUN_ID"
 export LOG_BASE
-mkdir -p "$LOG_BASE"
+acquire_run_lock
 HEARTBEAT_DIR="$LOG_BASE/.heartbeat"
 mkdir -p "$HEARTBEAT_DIR"
 SUMMARY_FILE="$LOG_BASE/summary.json"
