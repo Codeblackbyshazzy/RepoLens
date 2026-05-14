@@ -133,7 +133,7 @@ write_status_snapshot() {
   local status_file="$log_base/status.json"
   local tmp_file="${status_file}.tmp.${BASHPID}"
   local active_tmp completed_tmp lenses_tmp
-  local now_iso now_epoch started_at issues_created
+  local now_iso now_epoch started_at issues_created health
   local heartbeat_file
 
   now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -163,6 +163,10 @@ write_status_snapshot() {
     issues_created=0
   else
     issues_created=$((10#$issues_created))
+  fi
+  health=""
+  if [[ -f "$summary_file" ]]; then
+    health="$(jq -r '.health // empty' "$summary_file" 2>/dev/null || true)"
   fi
 
   if [[ "$parallel" != "true" && "$parallel" != "false" ]]; then
@@ -240,6 +244,7 @@ write_status_snapshot() {
     --arg started_at "$started_at" \
     --arg updated_at "$now_iso" \
     --arg state "$state" \
+    --arg health "$health" \
     --argjson issues_created "$issues_created" \
     --slurpfile active_raw <(jq -s 'sort_by(.domain, .lens_id)' "$active_tmp" 2>/dev/null || printf '[]') \
     --rawfile completed_raw "$completed_tmp" \
@@ -272,6 +277,7 @@ write_status_snapshot() {
           started_at: $started_at,
           updated_at: $updated_at,
           state: $state,
+          health: (if $health == "" then null else $health end),
           total_lenses: $total,
           counts: {
             queued: ($queued | length),

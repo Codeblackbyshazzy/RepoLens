@@ -99,6 +99,58 @@ record_lens() {
   return "$rc"
 }
 
+# classify_summary_health <summary_file> [threshold_percent]
+#   Prints ok, no-findings, broken, or empty for a finalized summary.
+classify_summary_health() {
+  local file="$1" threshold="${2:-90}"
+
+  if [[ ! "$threshold" =~ ^[1-9][0-9]*$ ]] || (( threshold > 100 )); then
+    return 2
+  fi
+
+  jq -r --argjson threshold "$threshold" '
+    (.totals.issues_created // 0) as $issues
+    | (.lenses // []) as $lenses
+    | ($lenses | map(select(.status != "skipped"))) as $run_lenses
+    | ($run_lenses | length) as $total
+    | ($run_lenses | map(select(.status == "max-iterations")) | length) as $max_iterations
+    | if $issues > 0 then "ok"
+      elif $total == 0 then "empty"
+      elif (($max_iterations * 100) >= ($threshold * $total)) then "broken"
+      else "no-findings"
+      end
+  ' "$file"
+}
+
+# set_summary_health <summary_file> [threshold_percent]
+#   Classifies a summary and stores the result in summary.json.
+set_summary_health() {
+  local file="$1" threshold="${2:-90}"
+  local health lock_dir tmp
+
+  health="$(classify_summary_health "$file" "$threshold")" || return $?
+  lock_dir="${file}.lock"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    sleep 0.05
+  done
+  tmp="$(mktemp "${file}.tmp.XXXXXX")" || {
+    rmdir "$lock_dir" 2>/dev/null || true
+    return 1
+  }
+  jq --arg h "$health" '
+    .health = $h
+    | if $h == "broken" and (.stopped_reason == null or .stopped_reason == "") then
+        .stopped_reason = "degenerate-no-findings"
+      else
+        .
+      end
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+  local rc=$?
+  rm -f "$tmp" 2>/dev/null || true
+  rmdir "$lock_dir" 2>/dev/null || true
+  return "$rc"
+}
+
 # set_stop_reason <summary_file> <reason>
 #   Sets the stopped_reason field in summary.json
 set_stop_reason() {

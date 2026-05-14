@@ -936,6 +936,12 @@ if (( REPOLENS_NO_PROGRESS_MIN_BYTES > 1048576 )); then
   die "REPOLENS_NO_PROGRESS_MIN_BYTES must be <= 1048576"
 fi
 
+REPOLENS_DEGENERATE_THRESHOLD="${REPOLENS_DEGENERATE_THRESHOLD:-90}"
+if [[ ! "$REPOLENS_DEGENERATE_THRESHOLD" =~ ^[1-9][0-9]*$ ]] || (( REPOLENS_DEGENERATE_THRESHOLD > 100 )); then
+  die "REPOLENS_DEGENERATE_THRESHOLD must be an integer from 1 to 100"
+fi
+REPOLENS_DEGENERATE_THRESHOLD=$((10#$REPOLENS_DEGENERATE_THRESHOLD))
+
 # --- Validate --change requirement ---
 if [[ "$MODE" == "custom" && -z "$CHANGE_STATEMENT" ]]; then
   die "Mode 'custom' requires --change \"your change statement\""
@@ -2765,6 +2771,29 @@ fi
 
 # --- Finalize ---
 finalize_summary "$SUMMARY_FILE"
+set_summary_health "$SUMMARY_FILE" "$REPOLENS_DEGENERATE_THRESHOLD"
+RUN_HEALTH="$(jq -r '.health // "ok"' "$SUMMARY_FILE" 2>/dev/null || printf 'ok')"
+
+case "$RUN_HEALTH" in
+  broken)
+    REPOLENS_FINAL_STATE="failed"
+    read -r HEALTH_MAX_ITERATIONS HEALTH_RUN_LENSES HEALTH_ISSUES < <(
+      jq -r '
+        (.lenses // [] | map(select(.status != "skipped"))) as $run_lenses
+        | [
+            ($run_lenses | map(select(.status == "max-iterations")) | length),
+            ($run_lenses | length),
+            (.totals.issues_created // 0)
+          ]
+        | @tsv
+      ' "$SUMMARY_FILE" 2>/dev/null || printf '0\t0\t0\n'
+    )
+    log_error "Run health: BROKEN - ${HEALTH_MAX_ITERATIONS:-0}/${HEALTH_RUN_LENSES:-0} run lenses reached max-iterations with ${HEALTH_ISSUES:-0} findings"
+    ;;
+  no-findings|empty)
+    REPOLENS_FINAL_STATE="finished-empty"
+    ;;
+esac
 
 log_info "=============================="
 log_info "RepoLens run $RUN_ID complete"
@@ -2790,4 +2819,8 @@ fi
 
 if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
   exit "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"
+fi
+
+if [[ "$RUN_HEALTH" == "broken" && "${REPOLENS_ALLOW_DEGENERATE:-false}" != "true" ]]; then
+  exit 2
 fi
