@@ -1291,6 +1291,20 @@ _rounds_record_skipped_lenses() {
 }
 
 _rounds_agent_abort_reason() {
+  if [[ -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    local systemic_reason
+    systemic_reason="$(head -n 1 "$LOG_BASE/.systemic-failure-abort" 2>/dev/null || true)"
+    case "$systemic_reason" in
+      auth-expired|model-unavailable|budget-exhausted)
+        printf '%s\n' "$systemic_reason"
+        ;;
+      *)
+        printf '%s\n' "agent-systemic-failure"
+        ;;
+    esac
+    return 0
+  fi
+
   if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
     printf '%s\n' "rate-limited"
     return 0

@@ -1342,6 +1342,10 @@ if [[ -n "$RESUME_RUN_ID" && -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
   rm -f "$LOG_BASE/.agent-no-progress-abort"
   clear_stop_reason "$SUMMARY_FILE"
 fi
+if [[ -n "$RESUME_RUN_ID" && -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+  rm -f "$LOG_BASE/.systemic-failure-abort"
+  clear_stop_reason "$SUMMARY_FILE"
+fi
 if [[ -n "$REMOTE_TARGET" ]]; then
   REMOTE_RUN_DIR="$LOG_BASE/.remote"
   mkdir -p "$REMOTE_RUN_DIR"
@@ -2443,9 +2447,24 @@ run_lens() {
     # "usage limit" / "rate limit" / "try again in" is a finding, not an
     # API failure — running the detector there produces false aborts that
     # skip every remaining lens.
-    local rl_hit rl_sig rl_snip
+    local failure_class rl_hit rl_sig rl_snip
     if [[ "$agent_rc" -ne 0 ]]; then
-      rl_hit="$(detect_agent_rate_limit "$output_file" || true)"
+      failure_class="$(classify_agent_iteration "$output_file" "$agent_rc" || printf '%s' "unknown")"
+      case "$failure_class" in
+        auth-expired|model-unavailable|budget-exhausted)
+          log_error "[$domain/$lens_id] Persistent agent failure: $failure_class. Aborting run."
+          printf '%s\n' "$failure_class" > "$LOG_BASE/.systemic-failure-abort"
+          exit_status="$failure_class"
+          break
+          ;;
+        rate-limited)
+          rl_hit="$(detect_agent_rate_limit "$output_file" || true)"
+          ;;
+        *)
+          rl_hit=""
+          ;;
+      esac
+
       if [[ -n "$rl_hit" ]]; then
         rl_sig="${rl_hit%%|*}"
         rl_snip="${rl_hit#*|}"
@@ -2596,7 +2615,9 @@ run_lens() {
   # Record result. Terminal agent guard lenses are recorded but NOT marked completed,
   # so --resume will re-run them on the next invocation.
   record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds"
-  if [[ "$exit_status" != "rate-limited" && "$exit_status" != "agent-no-progress" ]]; then
+  if [[ "$exit_status" != "rate-limited" && "$exit_status" != "agent-no-progress" \
+      && "$exit_status" != "auth-expired" && "$exit_status" != "model-unavailable" \
+      && "$exit_status" != "budget-exhausted" ]]; then
     mark_lens_completed "$lens_entry"
   fi
 
@@ -2730,7 +2751,8 @@ jq '.' "$SUMMARY_FILE"
 # If the rate-limit detector fired, exit non-zero so CI / operators see the
 # run as failed. The summary is already finalized with stopped_reason and
 # per-lens statuses, so --resume picks up seamlessly.
-if [[ -f "$LOG_BASE/.rate-limit-abort" || -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
+if [[ -f "$LOG_BASE/.rate-limit-abort" || -f "$LOG_BASE/.agent-no-progress-abort" \
+    || -f "$LOG_BASE/.systemic-failure-abort" ]]; then
   exit 1
 fi
 

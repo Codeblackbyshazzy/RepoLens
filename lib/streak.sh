@@ -158,6 +158,44 @@ detect_agent_rate_limit() {
   return 1
 }
 
+# classify_agent_iteration <output_file> <agent_rc>
+#   Classifies a failed agent iteration into the persistent classes that should
+#   abort the whole run, the existing rate-limit class, or unknown. Successful
+#   iterations are always unknown so findings that quote these phrases do not
+#   trip global abort handling.
+classify_agent_iteration() {
+  local file="$1" agent_rc="${2:-0}"
+  [[ "$agent_rc" -ne 0 && -s "$file" ]] || { printf '%s\n' "unknown"; return 0; }
+
+  local stripped line
+  stripped="$(strip_ansi < "$file" 2>/dev/null || true)"
+  [[ -n "$stripped" ]] || { printf '%s\n' "unknown"; return 0; }
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'not logged in|please run /login' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s\n' "auth-expired"
+    return 0
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'issue with the selected model|selected model.*(does not exist|not available|may not exist)|model.*may not exist.*not available' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s\n' "model-unavailable"
+    return 0
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'exceeded usd budget|error_max_budget_usd|max[-_ ]budget[-_ ]usd' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s\n' "budget-exhausted"
+    return 0
+  fi
+
+  if detect_agent_rate_limit "$file" >/dev/null; then
+    printf '%s\n' "rate-limited"
+  else
+    printf '%s\n' "unknown"
+  fi
+}
+
 # _handle_agent_rate_limit_in_phase <phase> <output_file>
 #   Shared non-lens phase policy for failed agent invocations. Returns 0 only
 #   when <output_file> contains a known upstream rate-limit/quota/auth failure.

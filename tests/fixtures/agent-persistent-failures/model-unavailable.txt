@@ -1,0 +1,1 @@
+There's an issue with the selected model (claude-3-5-sonnet-20241022). It may not exist or may not be available to your account.
