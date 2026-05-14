@@ -16,6 +16,7 @@
 # Tests for issue #168: lib/verify.sh — validate_verification_manifest and
 # run_verifier. All agent invocations are stubbed via _VERIFIER_AGENT_CALLBACK
 # so no real model is ever invoked (per CLAUDE.md::Tests).
+# shellcheck disable=SC2329
 
 set -uo pipefail
 
@@ -24,6 +25,8 @@ VERIFY_LIB="$SCRIPT_DIR/lib/verify.sh"
 TEMPLATE_LIB="$SCRIPT_DIR/lib/template.sh"
 CORE_LIB="$SCRIPT_DIR/lib/core.sh"
 LOGGING_LIB="$SCRIPT_DIR/lib/logging.sh"
+STREAK_LIB="$SCRIPT_DIR/lib/streak.sh"
+SUMMARY_LIB="$SCRIPT_DIR/lib/summary.sh"
 
 PASS=0
 FAIL=0
@@ -128,6 +131,10 @@ fi
 
 # shellcheck disable=SC1090
 source "$LOGGING_LIB"
+# shellcheck disable=SC1090
+source "$STREAK_LIB"
+# shellcheck disable=SC1090
+source "$SUMMARY_LIB"
 # shellcheck disable=SC1090
 source "$TEMPLATE_LIB"
 # shellcheck disable=SC1090
@@ -364,6 +371,54 @@ status=$?
 assert_success "direct agent verifier dispatch returns 0" "$status"
 assert_eq "direct verifier dispatch passes empty timeout when AGENT_TIMEOUT_SECS is unset" "" "$(sed -n '1p' "$RUN_AGENT_ARGS_FILE")"
 assert_eq "direct verifier dispatch keeps default kill grace" "30" "$(sed -n '2p' "$RUN_AGENT_ARGS_FILE")"
+
+# Case 5b: direct agent rate-limit failure is surfaced as an abort with a
+# forensic transcript and phase-specific summary stop reason.
+RUN_ID="test-run-211-verifier-rate-limit"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+ROUNDS_DIR="$LOG_BASE/rounds/round-1/lens-outputs"
+FINAL_DIR="$LOG_BASE/final"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+mkdir -p "$ROUNDS_DIR" "$FINAL_DIR"
+cat > "$ROUNDS_DIR/rate-limited-lens.md" <<'MD'
+---
+lens_id: rate-limited-lens
+domain: code
+round: 1
+severity: high
+confidence: medium
+root_cause_category: missing-validation
+suspect_files:
+  - sample.go:1
+---
+## suspect_files
+- sample.go:1
+## hypothesis
+Verifier should run for this finding.
+## evidence
+- sample.go:1
+## next_steps_for_synthesizer
+Verify this.
+MD
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+export RUN_ID LOG_BASE SUMMARY_FILE
+run_agent() {
+  printf 'HTTP 429: Retry-After: 90 seconds\n'
+  return 42
+}
+run_verifier "$RUN_ID" >"$TMPDIR/rate-limit.out" 2>"$TMPDIR/rate-limit.err"
+status=$?
+assert_eq "rate-limited direct verifier returns distinct rc" "3" "$status"
+assert_file_exists "rate-limited verifier writes transcript" "$FINAL_DIR/verifier-output.txt"
+assert_contains "rate-limited verifier transcript preserves agent output" "HTTP 429" "$(cat "$FINAL_DIR/verifier-output.txt" 2>/dev/null)"
+assert_file_exists "rate-limited verifier creates abort sentinel" "$LOG_BASE/.rate-limit-abort"
+assert_eq "rate-limited verifier records phase stop reason" "rate-limited-verifier" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+assert_file_missing "rate-limited verifier does not promote verification manifest" "$FINAL_DIR/verification.json"
+RUN_ID="test-run-168"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+ROUNDS_DIR="$LOG_BASE/rounds/round-1/lens-outputs"
+FINAL_DIR="$LOG_BASE/final"
+unset SUMMARY_FILE
 
 # Case 6: missing AGENT
 unset AGENT

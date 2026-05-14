@@ -175,10 +175,17 @@ run_triage() {
       return 1
     }
   else
-    agent_output="$(run_agent "$agent" "$prompt_text" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}")" || {
+    local agent_rc=0
+    run_agent "$agent" "$prompt_text" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}" > "$transcript_file" 2>&1 || agent_rc=$?
+    agent_output="$(cat "$transcript_file" 2>/dev/null || true)"
+    if (( agent_rc != 0 )); then
+      if declare -F _handle_agent_rate_limit_in_phase >/dev/null 2>&1 \
+          && _handle_agent_rate_limit_in_phase "triage" "$transcript_file"; then
+        return 3
+      fi
       echo "run_triage: agent invocation failed" >&2
       return 1
-    }
+    fi
   fi
 
   printf '%s\n' "$agent_output" > "$transcript_file" 2>/dev/null || true

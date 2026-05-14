@@ -16,7 +16,7 @@
 # RepoLens — DONE streak detection
 
 if ! declare -F severity_normalize >/dev/null 2>&1; then
-  # shellcheck source=lib/core.sh
+  # shellcheck source=/dev/null
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core.sh"
 fi
 
@@ -156,6 +156,43 @@ detect_agent_rate_limit() {
     fi
   done
   return 1
+}
+
+# _handle_agent_rate_limit_in_phase <phase> <output_file>
+#   Shared non-lens phase policy for failed agent invocations. Returns 0 only
+#   when <output_file> contains a known upstream rate-limit/quota/auth failure.
+_handle_agent_rate_limit_in_phase() {
+  local phase="${1:-agent-phase}" output_file="${2:-}"
+  local rl_hit rl_sig rl_snip stop_reason
+
+  [[ -n "$output_file" && -s "$output_file" ]] || return 1
+  rl_hit="$(detect_agent_rate_limit "$output_file" || true)"
+  [[ -n "$rl_hit" ]] || return 1
+
+  rl_sig="${rl_hit%%|*}"
+  rl_snip="${rl_hit#*|}"
+  stop_reason="rate-limited-${phase}"
+
+  if declare -F log_warn >/dev/null 2>&1 && [[ -n "${_REPOLENS_LOG_FILE+x}" ]]; then
+    log_warn "[$phase] Agent rate-limited / quota exceeded. Aborting run. Matched: $rl_sig. Snippet: $rl_snip"
+  else
+    printf '%s\n' "[$phase] Agent rate-limited / quota exceeded. Aborting run. Matched: $rl_sig. Snippet: $rl_snip" >&2
+  fi
+
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    mkdir -p "$LOG_BASE" 2>/dev/null || true
+    : > "$LOG_BASE/.rate-limit-abort"
+  fi
+
+  if [[ -n "${SUMMARY_FILE:-}" && -f "${SUMMARY_FILE:-}" ]] && declare -F set_stop_reason >/dev/null 2>&1; then
+    set_stop_reason "$SUMMARY_FILE" "$stop_reason"
+  fi
+
+  return 0
+}
+
+handle_agent_rate_limit_in_phase() {
+  _handle_agent_rate_limit_in_phase "$@"
 }
 
 # parse_rate_limit_resume_epoch <output_file>

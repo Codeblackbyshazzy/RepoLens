@@ -16,6 +16,7 @@
 # Tests for issue #171: lib/triage.sh — _triage_truncate_pack and run_triage.
 # All agent invocations are stubbed via _TRIAGE_AGENT_CALLBACK so no real
 # model is ever invoked (per CLAUDE.md::Tests).
+# shellcheck disable=SC2329
 
 set -uo pipefail
 
@@ -24,6 +25,8 @@ TRIAGE_LIB="$SCRIPT_DIR/lib/triage.sh"
 TEMPLATE_LIB="$SCRIPT_DIR/lib/template.sh"
 CORE_LIB="$SCRIPT_DIR/lib/core.sh"
 LOGGING_LIB="$SCRIPT_DIR/lib/logging.sh"
+STREAK_LIB="$SCRIPT_DIR/lib/streak.sh"
+SUMMARY_LIB="$SCRIPT_DIR/lib/summary.sh"
 
 PASS=0
 FAIL=0
@@ -138,6 +141,10 @@ fi
 
 # shellcheck disable=SC1090
 source "$LOGGING_LIB"
+# shellcheck disable=SC1090
+source "$STREAK_LIB"
+# shellcheck disable=SC1090
+source "$SUMMARY_LIB"
 # shellcheck disable=SC1090
 source "$TEMPLATE_LIB"
 # shellcheck disable=SC1090
@@ -303,6 +310,32 @@ status=$?
 assert_success "direct agent dispatch returns 0" "$status"
 assert_eq "direct agent dispatch passes empty timeout when AGENT_TIMEOUT_SECS is unset" "" "$(sed -n '1p' "$RUN_AGENT_ARGS_FILE")"
 assert_eq "direct agent dispatch keeps default kill grace" "30" "$(sed -n '2p' "$RUN_AGENT_ARGS_FILE")"
+
+# Case 6b: direct agent rate-limit failure is surfaced as an abort with a
+# forensic transcript and phase-specific summary stop reason.
+RUN_ID="test-run-211-triage-rate-limit"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+TRIAGE_DIR="$LOG_BASE/triage"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+mkdir -p "$LOG_BASE"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+export RUN_ID LOG_BASE SUMMARY_FILE
+run_agent() {
+  printf "ERROR: You've hit your usage limit. Try again at May 14th, 2026 11:00 PM.\n"
+  return 42
+}
+run_triage "$RUN_ID" >"$TMPDIR/rate-limit.out" 2>"$TMPDIR/rate-limit.err"
+status=$?
+assert_eq "rate-limited direct triage returns distinct rc" "3" "$status"
+assert_file_exists "rate-limited triage writes transcript" "$TRIAGE_DIR/transcript.txt"
+assert_contains "rate-limited triage transcript preserves agent output" "usage limit" "$(cat "$TRIAGE_DIR/transcript.txt" 2>/dev/null)"
+assert_file_exists "rate-limited triage creates abort sentinel" "$LOG_BASE/.rate-limit-abort"
+assert_eq "rate-limited triage records phase stop reason" "rate-limited-triage" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+assert_file_missing "rate-limited triage does not promote context pack" "$TRIAGE_DIR/context-pack.md"
+RUN_ID="test-run-171"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+TRIAGE_DIR="$LOG_BASE/triage"
+unset SUMMARY_FILE
 
 # Case 7: missing AGENT
 unset AGENT

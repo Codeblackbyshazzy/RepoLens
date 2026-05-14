@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # Tests for issue #159: lib/synthesize.sh — validate_manifest and run_synthesizer.
+# shellcheck disable=SC2329
 
 set -uo pipefail
 
@@ -21,6 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SYNTHESIZE_LIB="$SCRIPT_DIR/lib/synthesize.sh"
 TEMPLATE_LIB="$SCRIPT_DIR/lib/template.sh"
 CORE_LIB="$SCRIPT_DIR/lib/core.sh"
+STREAK_LIB="$SCRIPT_DIR/lib/streak.sh"
+SUMMARY_LIB="$SCRIPT_DIR/lib/summary.sh"
 
 PASS=0
 FAIL=0
@@ -150,6 +153,10 @@ fi
 
 # shellcheck disable=SC1090
 source "$TEMPLATE_LIB"
+# shellcheck disable=SC1090
+source "$STREAK_LIB"
+# shellcheck disable=SC1090
+source "$SUMMARY_LIB"
 # shellcheck disable=SC1090
 source "$CORE_LIB"
 # shellcheck disable=SC1090
@@ -724,5 +731,33 @@ if [[ "$candidate_count" -eq 0 ]]; then
 else
   fail_with "no candidate temp files left behind" "Found $candidate_count"
 fi
+
+# Failure path: direct agent rate-limit failures are distinguished from
+# generic manifest failures and leave operator-visible abort state.
+: > "$COMPOSE_LOG"
+: > "$AGENT_LOG"
+stub_compose_prompt
+run_agent() {
+  echo "call" >> "$AGENT_LOG"
+  printf "ERROR: You've hit your usage limit. Try again at May 14th, 2026 11:00 PM.\n"
+  return 42
+}
+setup_run "run-rate-limit"
+SUMMARY_FILE="$RUN_LOG/summary.json"
+mkdir -p "$RUN_LOG/final"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+echo '[]' > "$RUN_LOG/final/manifest.json"
+echo '[]' > "$RUN_LOG/final/cross-link-actions.preserved.json"
+export SUMMARY_FILE
+run_synthesizer "run-rate-limit" 2>"$TMPDIR/run-rate-limit.err"
+status=$?
+assert_eq "rate-limited synthesizer returns distinct rc" "3" "$status"
+assert_file_exists "rate-limited synthesizer writes transcript" "$RUN_LOG/final/synthesizer-output.txt"
+assert_contains "rate-limited synthesizer transcript preserves agent output" "usage limit" "$(cat "$RUN_LOG/final/synthesizer-output.txt" 2>/dev/null)"
+assert_file_exists "rate-limited synthesizer creates abort sentinel" "$RUN_LOG/.rate-limit-abort"
+assert_eq "rate-limited synthesizer records phase stop reason" "rate-limited-synthesizer" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+assert_file_missing "rate-limited synthesizer removes stale manifest" "$RUN_LOG/final/manifest.json"
+assert_file_missing "rate-limited synthesizer removes stale preserved cross-link actions" "$RUN_LOG/final/cross-link-actions.preserved.json"
+unset SUMMARY_FILE
 
 finish

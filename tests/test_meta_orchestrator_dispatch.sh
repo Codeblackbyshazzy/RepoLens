@@ -14,16 +14,19 @@
 # limitations under the License.
 
 # Tests for issue #154: meta-orchestrator dispatch parsing and handoff.
+# shellcheck disable=SC2034,SC2329
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# shellcheck source=../lib/streak.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/streak.sh"
-# shellcheck source=../lib/template.sh
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/summary.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/template.sh"
-# shellcheck source=../lib/rounds.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/rounds.sh"
 
 PASS=0
@@ -283,6 +286,43 @@ else
   hypotheses_state="missing"
 fi
 assert_eq "saturation hypotheses artifact exists" "present" "$hypotheses_state"
+
+echo ""
+echo "Test 3b: meta-orchestrator rate-limit failure records abort state"
+RUN_ID="meta-rate-limit"
+LOG_BASE="$TMPDIR/meta-rate-limit-logs"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+PROJECT_PATH="$TMPDIR/project"
+MODE="audit"
+AGENT="codex"
+AGENT_TIMEOUT_SECS=5
+AGENT_KILL_GRACE_SECS=1
+BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
+CURRENT_ROUND_TOTAL=2
+LOG_LINES=()
+RUN_AGENT_COUNT=0
+mkdir -p "$LOG_BASE/rounds/round-1" "$PROJECT_PATH"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+printf '%s\n' '# Round Digest' 'No findings this round.' > "$LOG_BASE/rounds/round-1/digest.md"
+
+run_agent() {
+  RUN_AGENT_COUNT=$((RUN_AGENT_COUNT + 1))
+  printf 'RateLimitError: retry budget exhausted\n'
+  return 42
+}
+
+run_meta_orchestrator 1 2
+rc=$?
+assert_eq "rate-limited meta-orchestrator returns distinct rc" "3" "$rc"
+assert_eq "rate-limited meta-orchestrator invokes agent once" "1" "$RUN_AGENT_COUNT"
+assert_contains "rate-limited meta output preserves agent text" "RateLimitError" "$(cat "$LOG_BASE/rounds/round-1/meta-orchestrator-output.txt" 2>/dev/null)"
+if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+  sentinel_state="present"
+else
+  sentinel_state="missing"
+fi
+assert_eq "rate-limited meta creates abort sentinel" "present" "$sentinel_state"
+assert_eq "rate-limited meta records phase stop reason" "rate-limited-meta" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
 
 echo ""
 echo "Test 4: run_rounds uses previous-round dispatch lens directives"

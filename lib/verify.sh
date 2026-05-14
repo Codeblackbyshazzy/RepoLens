@@ -288,6 +288,8 @@ run_verifier() {
     return 1
   }
 
+  local transcript_path="$final_dir/verifier-output.txt"
+
   # Test/integration hook: allow callers to inject a synthetic agent response
   # via a callback function. Mirrors the _FILING_AGENT_CALLBACK pattern used
   # by lib/filing.sh and makes verifier tests possible without real agent
@@ -298,13 +300,19 @@ run_verifier() {
       return 1
     }
   else
-    agent_output="$(run_agent "$agent" "$prompt_text" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}")" || {
+    local agent_rc=0
+    run_agent "$agent" "$prompt_text" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}" > "$transcript_path" 2>&1 || agent_rc=$?
+    agent_output="$(cat "$transcript_path" 2>/dev/null || true)"
+    if (( agent_rc != 0 )); then
+      if declare -F _handle_agent_rate_limit_in_phase >/dev/null 2>&1 \
+          && _handle_agent_rate_limit_in_phase "verifier" "$transcript_path"; then
+        return 3
+      fi
       echo "run_verifier: agent invocation failed" >&2
       return 1
-    }
+    fi
   fi
 
-  local transcript_path="$final_dir/verifier-output.txt"
   printf '%s\n' "$agent_output" > "$transcript_path" 2>/dev/null || true
 
   local extracted

@@ -2552,6 +2552,9 @@ run_lens() {
   log_info "[$domain/$lens_id] Finished after $iteration iteration(s), $lens_issues issue(s)"
 }
 
+# --- Phase execution state ---
+RUN_ROUNDS_RC=0
+
 # --- Triage (pre-rounds, round-0 context pack) ---
 # Single-shot agent that produces logs/<run-id>/triage/context-pack.md so every
 # round-1 lens shares a compact briefing of suspect commits, linked-issue
@@ -2561,15 +2564,19 @@ if [[ "$MODE" == "bugreport" && "${NO_TRIAGE:-true}" != "true" ]]; then
   log_info "Triage: building round-0 context pack"
   if run_triage "$RUN_ID"; then
     log_info "Triage: context-pack.md promoted ($TRIAGE_CONTEXT_PACK_FILE)"
+  elif [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    log_warn "Triage: rate-limited — aborting before lens rounds"
+    RUN_ROUNDS_RC=1
   else
     log_warn "Triage: failed — proceeding with empty context pack"
   fi
 fi
 
 # --- Execute lenses ---
-RUN_ROUNDS_RC=0
-run_rounds "$ROUNDS" LENS_LIST
-RUN_ROUNDS_RC=$?
+if [[ "$RUN_ROUNDS_RC" -eq 0 ]]; then
+  run_rounds "$ROUNDS" LENS_LIST
+  RUN_ROUNDS_RC=$?
+fi
 
 # --- Verifier (post-rounds, pre-synthesizer) ---
 # Re-reads every finding's cited code locations and emits
@@ -2580,6 +2587,9 @@ if [[ "$RUN_ROUNDS_RC" -eq 0 && "${NO_VERIFIER:-true}" != "true" ]]; then
   log_info "Verifier: re-reading cited code locations for evidence accuracy"
   if run_verifier "$RUN_ID"; then
     log_info "Verifier: verification.json promoted"
+  elif [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    log_warn "Verifier: rate-limited — aborting before synthesis"
+    RUN_ROUNDS_RC=1
   else
     log_warn "Verifier: failed — synthesizer will proceed without verification filtering"
   fi

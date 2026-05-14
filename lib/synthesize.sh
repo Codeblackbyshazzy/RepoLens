@@ -520,7 +520,7 @@ validate_manifest_against_verification() {
   wrong_set="$wrong_only_paths"
 
   local violations=0 cid path_count wrong_count
-  local cluster_ids cid_list
+  local cid_list
   cid_list="$(jq -r '.[] | .cluster_id // "<unnamed>"' "$manifest" 2>/dev/null)"
   if [[ -z "$cid_list" ]]; then
     return 0
@@ -657,10 +657,20 @@ run_synthesizer() {
     return 1
   }
 
-  agent_output="$(run_agent "$agent" "$prompt_text" "$project_path")" || {
+  local transcript_path="$final_dir/synthesizer-output.txt"
+  local agent_rc=0
+  run_agent "$agent" "$prompt_text" "$project_path" > "$transcript_path" 2>&1 || agent_rc=$?
+  agent_output="$(cat "$transcript_path" 2>/dev/null || true)"
+  if (( agent_rc != 0 )); then
+    if declare -F _handle_agent_rate_limit_in_phase >/dev/null 2>&1 \
+        && _handle_agent_rate_limit_in_phase "synthesizer" "$transcript_path"; then
+      rm -f "$final_dir/manifest.json"
+      rm -f "$final_dir/cross-link-actions.preserved.json"
+      return 3
+    fi
     echo "run_synthesizer: agent invocation failed" >&2
     return 1
-  }
+  fi
 
   local extracted
   extracted="$(_synthesize_extract_json_array "$agent_output")" || {

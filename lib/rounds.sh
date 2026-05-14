@@ -406,6 +406,10 @@ run_meta_orchestrator() {
   log_info "[round $round] Running meta-orchestrator for round $next_round"
   run_agent "$AGENT" "$prompt" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}" > "$output_path" 2>&1 || agent_rc=$?
   if (( agent_rc != 0 )); then
+    if declare -F _handle_agent_rate_limit_in_phase >/dev/null 2>&1 \
+        && _handle_agent_rate_limit_in_phase "meta" "$output_path"; then
+      return 3
+    fi
     _rounds_meta_warn "Meta-orchestrator exited with status $agent_rc"
     return "$agent_rc"
   fi
