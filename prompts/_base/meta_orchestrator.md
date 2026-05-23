@@ -66,7 +66,7 @@ repository evidence, keep it only as duplicate-filter context.
 
 Along the {{COVERAGE_DIMENSION}} axis, name what is NOT yet covered.
 
-Required adversarial framing: name 3 angles NOT yet covered, with file:line grounding.
+Required adversarial framing: name {{DISPATCH_CAP}} angles NOT yet covered, with file:line grounding.
 
 For each candidate angle, inspect the repository directly, cite at least one
 `path/to/file:line` anchor, explain why that anchor suggests a fresh angle for
@@ -97,7 +97,7 @@ Emit only the surviving dispatches. Do not include rejected candidates.
 
 ## Output Format
 
-If 3 fresh, grounded, non-duplicate angles survive, output exactly this section:
+If {{DISPATCH_CAP}} fresh, grounded, non-duplicate angles survive, output exactly this section:
 
 ## Round {{ROUND_INDEX+1}} dispatch plan
 
@@ -148,13 +148,13 @@ the draft contains any `##` subheadings.
 
 ## Validation
 
-If fewer than 3 fresh angles survive validation, emit `NO_FRESH_ANGLES` instead
+If fewer than {{DISPATCH_CAP}} fresh angles survive validation, emit `NO_FRESH_ANGLES` instead
 of padding.
 
-If you cannot name 3 fresh angles with file:line grounding, output `NO_FRESH_ANGLES` instead of stretching. Do not pad. Do not invent. A short honest answer is correct; a long padded answer is wrong.
+If you cannot name {{DISPATCH_CAP}} fresh angles with file:line grounding, output `NO_FRESH_ANGLES` instead of stretching. Do not pad. Do not invent. A short honest answer is correct; a long padded answer is wrong.
 
 ## Termination
 
 - Emit `NO_FRESH_ANGLES` on a line by itself when the search is saturated.
-- Use `NO_FRESH_ANGLES` when the configured task cannot produce 3 fresh, grounded, non-duplicate angles.
+- Use `NO_FRESH_ANGLES` when the configured task cannot produce {{DISPATCH_CAP}} fresh, grounded, non-duplicate angles.
 - If `NO_FRESH_ANGLES` applies, do not include a dispatch plan.

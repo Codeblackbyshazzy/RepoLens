@@ -657,11 +657,20 @@ _rounds_meta_round_number_from_dir() {
   fi
 }
 
+_rounds_meta_dispatch_cap() {
+  local cap="${REPOLENS_META_ORCH_DISPATCH_CAP:-3}"
+  if [[ ! "$cap" =~ ^[0-9]+$ || "$cap" -lt 1 ]]; then
+    cap=3
+  fi
+  printf '%s\n' "$cap"
+}
+
 _rounds_meta_prompt_vars() {
   local round="$1" next_round="$2" digest_path="$3" project_path="$4"
-  local round_total original_scope between_round_task coverage_dimension prior_output_anchor
+  local round_total original_scope between_round_task coverage_dimension prior_output_anchor dispatch_cap
 
   round_total="${CURRENT_ROUND_TOTAL:-${ROUND_TOTAL:-$next_round}}"
+  dispatch_cap="$(_rounds_meta_dispatch_cap)"
   original_scope="${ORIGINAL_BUG_REPORT_OR_SCOPE:-}"
   if [[ -z "$original_scope" ]]; then
     if [[ "${MODE:-}" == "bugreport" && -n "${BUG_REPORT:-}" ]]; then
@@ -738,6 +747,7 @@ _rounds_meta_prompt_vars() {
   printf '|BETWEEN_ROUND_TASK=%s' "$(_rounds_meta_prompt_escape_value "$between_round_task")"
   printf '|COVERAGE_DIMENSION=%s' "$(_rounds_meta_prompt_escape_value "$coverage_dimension")"
   printf '|PRIOR_OUTPUT_ANCHOR=%s' "$(_rounds_meta_prompt_escape_value "$prior_output_anchor")"
+  printf '|DISPATCH_CAP=%s' "$(_rounds_meta_prompt_escape_value "$dispatch_cap")"
 }
 
 _rounds_meta_lenses_dir() {
@@ -972,17 +982,38 @@ _rounds_meta_custom_focus_body() {
 
 _rounds_meta_write_custom_lens() {
   local custom_lenses_dir="$1" payload="$2" index="$3"
-  local category slug lens_dir lens_file focus_body
+  local category base_slug slug lens_dir lens_file focus_body
+  local round_prefix="" collision_suffix=2
 
   category="$(_rounds_meta_custom_category_from_payload "$payload")" || return 1
-  slug="$(_rounds_meta_slug "$category")"
-  [[ -n "$slug" ]] || slug="custom-$index"
+  base_slug="$(_rounds_meta_slug "$category")"
+  [[ -n "$base_slug" ]] || base_slug="custom-$index"
+
+  # Bug 1 — cross-round disambiguation. When CURRENT_ROUND_INDEX is set
+  # (multi-round mode), prefix the slug with r<N>- so the same agent-named
+  # category in round 2 and round 3 produces distinct lens IDs.
+  if [[ -n "${CURRENT_ROUND_INDEX:-}" && "$CURRENT_ROUND_INDEX" =~ ^[0-9]+$ ]]; then
+    round_prefix="r${CURRENT_ROUND_INDEX}-"
+  fi
+
+  slug="${round_prefix}${base_slug}"
   lens_dir="$custom_lenses_dir/custom"
   lens_file="$lens_dir/$slug.md"
 
+  mkdir -p "$lens_dir" || return 1
+
+  # Bug 2 — same-round collision counter. Two distinct categories that
+  # slugify identically (e.g. "Payment retry race!" and "payment-retry race")
+  # would otherwise overwrite each other. Append -2, -3, ... until we land
+  # on a free filename.
+  while [[ -e "$lens_file" ]]; do
+    slug="${round_prefix}${base_slug}-${collision_suffix}"
+    lens_file="$lens_dir/$slug.md"
+    collision_suffix=$(( collision_suffix + 1 ))
+  done
+
   focus_body="$(_rounds_meta_custom_focus_body "$payload")"
 
-  mkdir -p "$lens_dir" || return 1
   {
     printf -- '---\n'
     printf 'id: %s\n' "$slug"
@@ -1282,18 +1313,55 @@ _rounds_meta_parse_output() {
     fi
   fi
 
+  # Bug 3 — enforce REPOLENS_META_ORCH_DISPATCH_CAP across LENS+GENERIC+CUSTOM.
+  # The cap is advisory in the prompt; if the agent emits more, drop the
+  # surplus from the tail (preserving the agent's prioritized ordering:
+  # LENS first, then GENERIC, then CUSTOM).
+  local dispatch_cap total_dispatches lens_count generic_count custom_count
+  local lens_kept generic_kept custom_kept
+  dispatch_cap="$(_rounds_meta_dispatch_cap)"
+  lens_count="${#lens_dispatch_lines[@]}"
+  generic_count="${#generic_dispatch_lines[@]}"
+  custom_count="${#custom_payloads[@]}"
+  total_dispatches=$(( lens_count + generic_count + custom_count ))
+  lens_kept="$lens_count"
+  generic_kept="$generic_count"
+  custom_kept="$custom_count"
+  if (( total_dispatches > dispatch_cap )); then
+    local remaining="$dispatch_cap"
+    if (( lens_kept > remaining )); then
+      lens_kept="$remaining"
+    fi
+    remaining=$(( remaining - lens_kept ))
+    if (( generic_kept > remaining )); then
+      generic_kept="$remaining"
+    fi
+    remaining=$(( remaining - generic_kept ))
+    if (( custom_kept > remaining )); then
+      custom_kept="$remaining"
+    fi
+    _rounds_meta_warn "Meta-orchestrator dispatch cap enforced: kept $dispatch_cap of $total_dispatches dispatches (cap=$dispatch_cap)."
+  fi
+
   tmp_dispatch="${dispatch_file}.tmp.$$"
   {
     printf '# Meta-Orchestrator Dispatch\n\n'
-    for lens_dispatch_line in "${lens_dispatch_lines[@]}"; do
-      printf '%s\n' "$lens_dispatch_line"
-    done
-    for generic_dispatch_line in "${generic_dispatch_lines[@]}"; do
-      printf '%s\n' "$generic_dispatch_line"
-    done
-    for custom_payload in "${custom_payloads[@]}"; do
-      printf '%s\n' "$custom_payload"
-    done
+    local _cap_idx=0
+    if (( lens_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < lens_kept; _cap_idx++)); do
+        printf '%s\n' "${lens_dispatch_lines[$_cap_idx]}"
+      done
+    fi
+    if (( generic_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < generic_kept; _cap_idx++)); do
+        printf '%s\n' "${generic_dispatch_lines[$_cap_idx]}"
+      done
+    fi
+    if (( custom_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < custom_kept; _cap_idx++)); do
+        printf '%s\n' "${custom_payloads[$_cap_idx]}"
+      done
+    fi
   } > "$tmp_dispatch" || {
     rm -f "$tmp_dispatch"
     return 1

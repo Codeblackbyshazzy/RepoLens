@@ -26,7 +26,7 @@ instead of repeating the same audit perspective.
 Useful rotations include technical accuracy, pedagogical clarity, narrative
 coherence, accessibility, tone consistency, metadata consistency, audience fit,
 source-material alignment, section structure, and maintainability of examples.
-Select at least 3 grounded rotations. Each survivor must cite a current
+Select at least {{DISPATCH_CAP}} grounded rotations. Each survivor must cite a current
 `path/to/file:line` anchor and explain why the same section or a newly selected
 section should be re-audited through the new lens. Prefer rotations that change
 the reviewer perspective, audience concern, evidence standard, or content type.
@@ -34,7 +34,7 @@ Discard repeat audits within the prior lens, prior-output-only claims, and
 sections without current file:line grounding.
 
 ## Output Format
-If at least 3 fresh, grounded lens rotations survive, output:
+If at least {{DISPATCH_CAP}} fresh, grounded lens rotations survive, output:
 
 ## Round {{ROUND_INDEX+1}} dispatch plan
 - LENS: <existing-lens-id> - `path/to/file:line`; one-line rationale for why this existing lens should review the content section.
@@ -45,6 +45,6 @@ narrow content audit category and include a short draft prompt that follows
 {{BETWEEN_ROUND_TASK}} without copying prior-output instructions. You may include
 `HYPOTHESES_TO_VERIFY:` after the dispatch bullets when it helps the next round.
 
-If fewer than 3 grounded lens rotations survive validation, emit
+If fewer than {{DISPATCH_CAP}} grounded lens rotations survive validation, emit
 `NO_FRESH_ANGLES` instead of padding. Emit `NO_FRESH_ANGLES` on a line by itself
 when content review is saturated.

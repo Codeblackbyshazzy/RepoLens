@@ -70,7 +70,10 @@ ENDJSON
 }
 
 # record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues] [rate_limit_sleep_seconds]
-#   Appends a lens result to the summary
+#   Appends a lens result to the summary. The `round` field is sourced from
+#   the ambient CURRENT_ROUND_INDEX variable (set by `run_rounds` for
+#   multi-round runs), defaulting to 0 for non-rounded runs so that
+#   `(domain, lens)` no longer collides across rounds in `summary.json`.
 record_lens() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
@@ -85,6 +88,10 @@ _record_lens_locked() {
   local rate_limit_sleep_seconds="${7:-0}"
   local tmp
   local lenses_increment=1
+  local round="${CURRENT_ROUND_INDEX:-0}"
+  if [[ ! "$round" =~ ^[0-9]+$ ]]; then
+    round=0
+  fi
   tmp="$(mktemp "${file}.tmp.XXXXXX")" || return 1
   if [[ "$status" == "skipped" ]]; then
     lenses_increment=0
@@ -94,7 +101,8 @@ _record_lens_locked() {
   fi
   jq --arg d "$domain" --arg l "$lens_id" --argjson i "$iterations" --arg s "$status" \
      --argjson iss "$issues" --argjson rlss "$rate_limit_sleep_seconds" --argjson lr "$lenses_increment" \
-    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss}] |
+     --argjson rnd "$round" \
+    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss, "round": $rnd}] |
      .totals.lenses_run += $lr |
      .totals.iterations_total += $i |
      .totals.issues_created += $iss' "$file" > "$tmp" && mv "$tmp" "$file"

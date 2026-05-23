@@ -22,7 +22,7 @@ Prior round digest reference:
 Cluster round {{ROUND_INDEX}} output by opportunity space. Name the dominant axes
 already explored: user segments, market contexts, business models, deployment
 topologies, monetization paths, workflows, and technical constraints.
-Then move laterally. Identify at least 3 orthogonal opportunity spaces grounded
+Then move laterally. Identify at least {{DISPATCH_CAP}} orthogonal opportunity spaces grounded
 in the current repository and materially different from prior ideas. Each
 survivor must cite a current `path/to/file:line` anchor and explain how that
 anchor supports a product idea, opportunity, segment, market, workflow, business
@@ -33,7 +33,7 @@ part of the system, or explore a different business model. Discard near-duplicat
 prior-output-only concepts, and concepts without current file:line grounding.
 
 ## Output Format
-If at least 3 fresh, grounded, orthogonal opportunity spaces survive, output:
+If at least {{DISPATCH_CAP}} fresh, grounded, orthogonal opportunity spaces survive, output:
 
 ## Round {{ROUND_INDEX+1}} dispatch plan
 - LENS: <existing-lens-id> - `path/to/file:line`; one-line rationale for why this existing lens should explore the opportunity space.
@@ -44,6 +44,6 @@ narrow discovery category and include a short draft prompt that follows
 {{BETWEEN_ROUND_TASK}} without copying prior-output instructions. You may include
 `HYPOTHESES_TO_VERIFY:` after the dispatch bullets when it helps the next round.
 
-If fewer than 3 grounded orthogonal opportunity spaces survive validation, emit
+If fewer than {{DISPATCH_CAP}} grounded orthogonal opportunity spaces survive validation, emit
 `NO_FRESH_ANGLES` instead of padding. Emit `NO_FRESH_ANGLES` on a line by itself
 when discovery is saturated.
