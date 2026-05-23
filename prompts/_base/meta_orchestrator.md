@@ -121,6 +121,31 @@ Use one bullet per dispatch. Every dispatch MUST cite at least one
 fresh. A `CUSTOM:` bullet must include a short draft prompt that follows the
 configured task without copying prior-output instructions.
 
+### CUSTOM draft prompt fence
+
+A `CUSTOM:` bullet's draft prompt MUST be wrapped in a fenced block so that
+`##` subheadings inside the draft (e.g. `## Focus`, `## Approach`, `## Output`)
+are not mistaken for a new orchestrator section. The opening fence can be
+plain ```` ``` ```` or tagged ```` ```prompt ````; the closing fence is plain
+```` ``` ````. The parser preserves everything between the fences verbatim as
+the lens's expert-focus body.
+
+Example:
+
+    - CUSTOM: payment-retry-race role=deeper - `lib/billing/retry.go:84`; idempotency key derivation suspicious.
+      ```prompt
+      ## Focus
+      Inspect lib/billing/retry.go:84 for race conditions in the retry handler.
+      ## Approach
+      Trace the idempotency-key derivation across concurrent retries.
+      ## Output
+      One finding per concrete race window with file:line evidence.
+      ```
+
+Legacy unfenced draft prompts (introduced by a `Draft prompt:` label) are
+still accepted for backward compatibility, but a fenced block is required if
+the draft contains any `##` subheadings.
+
 ## Validation
 
 If fewer than 3 fresh angles survive validation, emit `NO_FRESH_ANGLES` instead

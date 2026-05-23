@@ -883,15 +883,72 @@ _rounds_meta_dispatch_generic_entries() {
   done < "$dispatch_file"
 }
 
+_rounds_meta_custom_focus_body() {
+  # Extract the agent-supplied focus instructions from a CUSTOM payload.
+  # If the payload contains a ```fenced block, return its inner content
+  # (de-indented to the fence's leading indent). Otherwise strip the
+  # leading `- CUSTOM:` bullet and any `Draft prompt:` label and return
+  # the remainder.
+  local payload="$1"
+  local line trimmed in_fence=0 saw_fence=0 dropped_first=0
+  local fenced_body="" fallback_body="" fence_indent=""
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(_rounds_meta_trim "$line")"
+
+    if [[ "${trimmed:0:3}" == '```' ]]; then
+      if (( in_fence == 0 )); then
+        in_fence=1
+        saw_fence=1
+        fence_indent="${line%%\`*}"
+      else
+        in_fence=0
+      fi
+      continue
+    fi
+
+    if (( in_fence )); then
+      if [[ -n "$fence_indent" && "$line" == "$fence_indent"* ]]; then
+        line="${line#"$fence_indent"}"
+      fi
+      [[ -n "$fenced_body" ]] && fenced_body+=$'\n'
+      fenced_body+="$line"
+      continue
+    fi
+
+    if (( dropped_first == 0 )); then
+      dropped_first=1
+      if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]* ]]; then
+        continue
+      fi
+    fi
+
+    if [[ "${trimmed,,}" == "draft prompt:" ]]; then
+      continue
+    fi
+
+    [[ -n "$fallback_body" ]] && fallback_body+=$'\n'
+    fallback_body+="$line"
+  done <<< "$payload"
+
+  if (( saw_fence )) && [[ -n "$fenced_body" ]]; then
+    printf '%s' "$fenced_body"
+  else
+    printf '%s' "$fallback_body"
+  fi
+}
+
 _rounds_meta_write_custom_lens() {
   local custom_lenses_dir="$1" payload="$2" index="$3"
-  local category slug lens_dir lens_file
+  local category slug lens_dir lens_file focus_body
 
   category="$(_rounds_meta_custom_category_from_payload "$payload")" || return 1
   slug="$(_rounds_meta_slug "$category")"
   [[ -n "$slug" ]] || slug="custom-$index"
   lens_dir="$custom_lenses_dir/custom"
   lens_file="$lens_dir/$slug.md"
+
+  focus_body="$(_rounds_meta_custom_focus_body "$payload")"
 
   mkdir -p "$lens_dir" || return 1
   {
@@ -903,7 +960,9 @@ _rounds_meta_write_custom_lens() {
     printf -- '---\n'
     printf '## Your Expert Focus\n\n'
     printf 'Category: %s\n\n' "$category"
-    printf '%s\n' "$payload"
+    if [[ -n "$focus_body" ]]; then
+      printf '%s\n' "$focus_body"
+    fi
   } > "$lens_file" || return 1
 
   printf 'custom/%s\n' "$slug"
@@ -944,7 +1003,7 @@ _rounds_meta_dispatch_custom_entries() {
   local dispatch_file="$1" custom_lenses_dir="$2"
   local line trimmed payload="" custom_entry index=0
   local role="" focus="" anchor="" exclude="" tuple
-  local in_custom=0
+  local in_custom=0 in_fence=0
   local -A seen_entries=()
 
   [[ -f "$dispatch_file" ]] || return 0
@@ -952,7 +1011,14 @@ _rounds_meta_dispatch_custom_entries() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
-    if (( in_custom )) && _rounds_meta_dispatch_boundary "$trimmed"; then
+
+    if (( in_custom )) && [[ "${trimmed:0:3}" == '```' ]]; then
+      in_fence=$(( 1 - in_fence ))
+      payload+=$'\n'"$line"
+      continue
+    fi
+
+    if (( in_custom )) && (( in_fence == 0 )) && _rounds_meta_dispatch_boundary "$trimmed"; then
       index=$((index + 1))
       if custom_entry="$(_rounds_meta_write_custom_lens "$custom_lenses_dir" "$payload" "$index")"; then
         if [[ -z "${seen_entries[$custom_entry]:-}" ]]; then
@@ -964,11 +1030,13 @@ _rounds_meta_dispatch_custom_entries() {
       fi
       payload=""
       in_custom=0
+      in_fence=0
     fi
 
-    if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
+    if (( in_fence == 0 )) && [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
       payload="$trimmed"
       in_custom=1
+      in_fence=0
       continue
     fi
 
@@ -978,6 +1046,9 @@ _rounds_meta_dispatch_custom_entries() {
   done < "$dispatch_file"
 
   if (( in_custom )); then
+    if (( in_fence )); then
+      _rounds_meta_warn "Custom dispatch payload reached EOF with an unclosed fence; flushing as-is."
+    fi
     index=$((index + 1))
     if custom_entry="$(_rounds_meta_write_custom_lens "$custom_lenses_dir" "$payload" "$index")"; then
       if [[ -z "${seen_entries[$custom_entry]:-}" ]]; then
@@ -1054,7 +1125,7 @@ _rounds_meta_parse_output() {
   local dispatch_dir hypotheses_dir tmp_dispatch line trimmed lens_id custom_payload custom_category
   local lens_attrs lens_dispatch_line generic_attrs generic_dispatch_line stripped attr_body
   local role focus anchor exclude missed_angle dedup_key
-  local in_custom=0
+  local in_custom=0 in_fence=0
   local -a lens_dispatch_lines=() custom_payloads=() generic_dispatch_lines=()
   local -A seen_lens_keys=() seen_custom=() seen_generic_keys=()
 
@@ -1066,7 +1137,13 @@ _rounds_meta_parse_output() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
 
-    if (( in_custom )) && _rounds_meta_dispatch_boundary "$trimmed"; then
+    if (( in_custom )) && [[ "${trimmed:0:3}" == '```' ]]; then
+      in_fence=$(( 1 - in_fence ))
+      custom_payload+=$'\n'"$line"
+      continue
+    fi
+
+    if (( in_custom )) && (( in_fence == 0 )) && _rounds_meta_dispatch_boundary "$trimmed"; then
       custom_category="$(_rounds_meta_custom_category_from_payload "$custom_payload")"
       if [[ -n "$custom_category" && -z "${seen_custom[$custom_category]:-}" ]]; then
         seen_custom["$custom_category"]=1
@@ -1074,6 +1151,7 @@ _rounds_meta_parse_output() {
       fi
       custom_payload=""
       in_custom=0
+      in_fence=0
     fi
 
     if (( in_custom )); then
@@ -1157,10 +1235,14 @@ _rounds_meta_parse_output() {
     if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
       custom_payload="$trimmed"
       in_custom=1
+      in_fence=0
     fi
   done < "$output_file"
 
   if (( in_custom )); then
+    if (( in_fence )); then
+      _rounds_meta_warn "Meta-orchestrator output reached EOF with an unclosed CUSTOM fence; flushing as-is."
+    fi
     custom_category="$(_rounds_meta_custom_category_from_payload "$custom_payload")"
     if [[ -n "$custom_category" && -z "${seen_custom[$custom_category]:-}" ]]; then
       seen_custom["$custom_category"]=1
