@@ -847,7 +847,65 @@ forge_issue_create() {
       return $?
       ;;
     tea)
-      die "forge_issue_create: tea backend not yet implemented (see #61)"
+      local -a tea_target_flags=()
+      if [[ -n "${FORGE_PROJECT_PATH:-}" ]]; then
+        tea_target_flags=(--repo "$FORGE_PROJECT_PATH" --remote "${FORGE_REMOTE_NAME:-origin}")
+      elif [[ -n "${FORGE_TEA_LOGIN:-}" ]]; then
+        tea_target_flags=(--repo "$repo" --login "$FORGE_TEA_LOGIN")
+      else
+        die "forge_issue_create: tea backend requires FORGE_PROJECT_PATH or FORGE_TEA_LOGIN for target binding"
+      fi
+
+      local -a tea_label_flags=()
+      if (( ${#labels[@]} > 0 )); then
+        local labels_csv="" lbl
+        for lbl in "${labels[@]}"; do
+          [[ -n "$lbl" ]] || continue
+          if [[ -z "$labels_csv" ]]; then
+            labels_csv="$lbl"
+          else
+            labels_csv="$labels_csv,$lbl"
+          fi
+        done
+        if [[ -n "$labels_csv" ]]; then
+          tea_label_flags=(--labels "$labels_csv")
+        fi
+      fi
+
+      local tea_err tea_out tea_rc
+      tea_err="$(mktemp 2>/dev/null)" || tea_err=""
+      if [[ -n "$tea_err" ]]; then
+        tea_out="$(tea issues create "${tea_target_flags[@]}" \
+          --title "$title" --body-file "$body_file" \
+          "${tea_label_flags[@]}" --output json 2>"$tea_err")"
+        tea_rc=$?
+      else
+        tea_out="$(tea issues create "${tea_target_flags[@]}" \
+          --title "$title" --body-file "$body_file" \
+          "${tea_label_flags[@]}" --output json 2>/dev/null)"
+        tea_rc=$?
+      fi
+      if [[ "$tea_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$tea_err" && -s "$tea_err" ]]; then
+          first_err="$(head -n1 "$tea_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$tea_err" ]] && rm -f "$tea_err"
+        _forge_warn "forge_issue_create: tea failed for repo=$repo rc=$tea_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$tea_err" ]] && rm -f "$tea_err"
+
+      local html_url=""
+      if command -v jq >/dev/null 2>&1; then
+        html_url="$(printf '%s' "$tea_out" | jq -r '.html_url // empty' 2>/dev/null || true)"
+      fi
+      if [[ -z "$html_url" ]]; then
+        _forge_warn "forge_issue_create: tea response missing html_url for repo=$repo"
+        return 1
+      fi
+      printf '%s\n' "$html_url"
+      return 0
       ;;
     fj)
       die "forge_issue_create: fj backend not yet implemented (see #62)"
@@ -884,7 +942,41 @@ forge_issue_comment() {
       return $?
       ;;
     tea)
-      die "forge_issue_comment: tea backend not yet implemented (see #61)"
+      local -a tea_target_flags=()
+      if [[ -n "${FORGE_PROJECT_PATH:-}" ]]; then
+        tea_target_flags=(--repo "$FORGE_PROJECT_PATH" --remote "${FORGE_REMOTE_NAME:-origin}")
+      elif [[ -n "${FORGE_TEA_LOGIN:-}" ]]; then
+        tea_target_flags=(--repo "$repo" --login "$FORGE_TEA_LOGIN")
+      else
+        die "forge_issue_comment: tea backend requires FORGE_PROJECT_PATH or FORGE_TEA_LOGIN for target binding"
+      fi
+
+      local tea_err tea_out tea_rc
+      tea_err="$(mktemp 2>/dev/null)" || tea_err=""
+      if [[ -n "$tea_err" ]]; then
+        tea_out="$(tea issues comment "$issue_number" \
+          --body-file "$body_file" "${tea_target_flags[@]}" 2>"$tea_err")"
+        tea_rc=$?
+      else
+        tea_out="$(tea issues comment "$issue_number" \
+          --body-file "$body_file" "${tea_target_flags[@]}" 2>/dev/null)"
+        tea_rc=$?
+      fi
+      if [[ "$tea_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$tea_err" && -s "$tea_err" ]]; then
+          first_err="$(head -n1 "$tea_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$tea_err" ]] && rm -f "$tea_err"
+        _forge_warn "forge_issue_comment: tea failed for repo=$repo issue=$issue_number rc=$tea_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$tea_err" ]] && rm -f "$tea_err"
+
+      if [[ -n "$tea_out" ]]; then
+        printf '%s\n' "$tea_out" | head -n1
+      fi
+      return 0
       ;;
     fj)
       die "forge_issue_comment: fj backend not yet implemented (see #62)"
