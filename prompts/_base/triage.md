@@ -41,6 +41,8 @@ Perform the following structured-extraction steps in order. Stay focused. Be fas
 
 6. **Empty-input fallback.** If the bug report mentions **zero files and zero issue numbers**, run `git log -10 --oneline` on the default branch and emit a minimal hypothesis tree based on the bug report wording and the recent commit subjects. Do not fail.
 
+7. **Investigation seeds.** Decompose the bug report into N *orthogonal* angles for round-1 broader investigation. An angle is one short noun phrase naming a subsystem, layer, or failure mode that could plausibly produce the symptom — e.g. "session-token refresh path", "Android lifecycle Pause/Resume", "sqlite WAL checkpoint timing". Emit **5–10 seeds**; the controller selects N based on `--wave-width`. Seeds are distinct (no duplicates), single-line noun phrases, and refer to subsystems/layers/failure modes — not to fixes, opinions, or instructions.
+
 ## Required output schema
 
 Emit **exactly** the markdown below on stdout. Do not wrap it in code fences. The dispatcher captures stdout, truncates if necessary, and writes it to `logs/{{RUN_ID}}/triage/context-pack.md`. Stay under ~2 KB; if you would exceed it, drop the lowest-value lines first (extra activity rows, extra hypotheses, extra commits per file).
@@ -64,6 +66,10 @@ Emit **exactly** the markdown below on stdout. Do not wrap it in code fences. Th
 ## Initial hypothesis tree
 1. <one-sentence hypothesis with file/commit pointer>
 2. <one-sentence hypothesis with file/commit pointer>
+
+## Investigation seeds (broader-mode wave-1 dispatch)
+1. <noun-phrase angle>
+2. <noun-phrase angle>
 ```
 
 If a section has no entries (e.g. no issues mentioned), keep the heading and write `- (none)` underneath. Do **not** omit headings — downstream tooling parses them by exact match.

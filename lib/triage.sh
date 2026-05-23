@@ -49,6 +49,87 @@ _triage_log_base() {
   printf '%s/logs/%s' "$(_triage_repo_root)" "$run_id"
 }
 
+# _triage_extract_investigation_seeds <src_path> <dst_path>
+#   Parses the `## Investigation seeds` markdown section from <src_path> and
+#   writes one cleaned seed per line to <dst_path>. The section is captured
+#   from the first `## Investigation seeds` heading (with or without the
+#   parenthetical suffix) until the next `## ` heading or EOF.
+#
+#   Each captured line is sanitized:
+#     - leading list markers (`1.`, `2)`, `-`, `*`, `+`) are stripped
+#     - surrounding whitespace is trimmed
+#     - blank lines, `DONE` markers, and `(none)` placeholders are dropped
+#     - duplicate seeds are removed (case-sensitive, first occurrence wins)
+#     - embedded control characters (newline, CR, tab) and pipes are
+#       collapsed to a single space so they cannot break dispatch parsers
+#       downstream
+#   The destination file is always created (possibly empty) when the source
+#   exists. Returns 0 on success even when no seeds are found.
+_triage_extract_investigation_seeds() {
+  local src="$1" dst="$2"
+  local tmp_dst
+  tmp_dst="${dst}.tmp.$$"
+
+  : > "$tmp_dst" || return 1
+
+  if [[ ! -f "$src" ]]; then
+    mv "$tmp_dst" "$dst" 2>/dev/null || rm -f "$tmp_dst"
+    return 1
+  fi
+
+  awk '
+    BEGIN { in_seeds = 0 }
+    /^##[[:space:]]+Investigation seeds/ {
+      in_seeds = 1
+      next
+    }
+    in_seeds && /^##[[:space:]]+/ {
+      in_seeds = 0
+    }
+    in_seeds { print }
+  ' "$src" > "$tmp_dst.raw" || {
+    rm -f "$tmp_dst" "$tmp_dst.raw"
+    return 1
+  }
+
+  local -A seen=()
+  local raw_line seed
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    seed="$raw_line"
+    seed="${seed//$'\r'/}"
+    seed="${seed//$'\t'/ }"
+    seed="${seed//|/ }"
+    # Trim leading whitespace
+    seed="${seed#"${seed%%[![:space:]]*}"}"
+    # Strip leading list marker: digits with `.` or `)`, or `-`, `*`, `+`
+    if [[ "$seed" =~ ^([0-9]+[\.\)]|[-*+])[[:space:]]+(.*)$ ]]; then
+      seed="${BASH_REMATCH[2]}"
+    fi
+    # Collapse internal whitespace runs to a single space
+    seed="$(printf '%s' "$seed" | tr -s '[:space:]' ' ')"
+    # Trim leading/trailing whitespace
+    seed="${seed#"${seed%%[![:space:]]*}"}"
+    seed="${seed%"${seed##*[![:space:]]}"}"
+
+    [[ -z "$seed" ]] && continue
+    [[ "$seed" == "DONE" ]] && continue
+    [[ "$seed" == "(none)" ]] && continue
+    [[ "$seed" == '`' ]] && continue
+    if [[ -n "${seen[$seed]:-}" ]]; then
+      continue
+    fi
+    seen["$seed"]=1
+    printf '%s\n' "$seed" >> "$tmp_dst"
+  done < "$tmp_dst.raw"
+  rm -f "$tmp_dst.raw"
+
+  if ! mv "$tmp_dst" "$dst"; then
+    rm -f "$tmp_dst"
+    return 1
+  fi
+  return 0
+}
+
 # _triage_truncate_pack <src_path> <dst_path>
 #   Copies up to TRIAGE_PACK_MAX_BYTES from <src_path> into <dst_path>. If the
 #   source exceeds the cap, the destination is truncated and a deterministic
@@ -135,6 +216,11 @@ run_triage() {
   # Idempotence: --resume re-enters with the same run id. If a non-empty pack
   # already exists, keep it; do not pay the agent cost again.
   if [[ -s "$pack_file" ]]; then
+    # Backfill the seeds artifact for older runs that predate it. Best-effort:
+    # if extraction fails we still consider the cached pack canonical.
+    if [[ ! -f "$triage_dir/investigation-seeds.txt" ]]; then
+      _triage_extract_investigation_seeds "$pack_file" "$triage_dir/investigation-seeds.txt" || true
+    fi
     return 0
   fi
 
@@ -206,6 +292,12 @@ run_triage() {
     rm -f "$raw_pack"
     return 1
   fi
+
+  # Extract investigation seeds from the FULL raw output before truncation, so
+  # the auditable seeds file survives the 2 KB pack cap. Failure is non-fatal:
+  # bugreport wave-1 selection falls back to full fanout when seeds are missing.
+  local seeds_file="$triage_dir/investigation-seeds.txt"
+  _triage_extract_investigation_seeds "$raw_pack" "$seeds_file" || true
 
   local candidate
   candidate="$triage_dir/context-pack.md.tmp.$$"

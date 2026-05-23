@@ -1982,6 +1982,101 @@ _rounds_build_prior_digest_context() {
   printf '%s' "$context_path"
 }
 
+# _rounds_wave_width
+#   Returns the wave-1 dispatch fanout cap. Defaults to 7. The cap is clamped
+#   to [1, 50] to defend against pathological inputs from env or future flags.
+_rounds_wave_width() {
+  local raw="${REPOLENS_WAVE_WIDTH:-7}"
+  if ! [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
+    raw=7
+  fi
+  if (( raw > 50 )); then
+    raw=50
+  fi
+  printf '%s\n' "$raw"
+}
+
+# _rounds_sanitize_seed <raw_seed>
+#   Sanitizes a single seed line for embedding in a dispatch attribute. Strips
+#   control characters, collapses whitespace, and escapes characters that
+#   could break the GENERIC: key=value tokenizer (pipe, backtick, quote).
+_rounds_sanitize_seed() {
+  local seed="${1:-}"
+  seed="${seed//$'\r'/}"
+  seed="${seed//$'\n'/ }"
+  seed="${seed//$'\t'/ }"
+  seed="${seed//|/ }"
+  seed="${seed//\`/ }"
+  seed="${seed//\"/ }"
+  seed="$(printf '%s' "$seed" | tr -s '[:space:]' ' ')"
+  seed="${seed#"${seed%%[![:space:]]*}"}"
+  seed="${seed%"${seed##*[![:space:]]}"}"
+  printf '%s' "$seed"
+}
+
+# _rounds_select_wave_1 <run_id>
+#   Bugreport+waves round 1 selector. Reads the auditable seeds file produced
+#   by run_triage and emits a synthetic dispatch.md under
+#   logs/<run>/rounds/round-0/. Each non-empty seed becomes one
+#   `GENERIC: role=broader focus="<seed>"` directive, clamped to
+#   REPOLENS_WAVE_WIDTH (default 7).
+#
+#   Returns 0 on success regardless of how many seeds were emitted. If the
+#   seeds file is missing, empty, or yields zero usable seeds, no dispatch
+#   file is created and the caller falls back to the full lens list.
+#
+#   This function does not invoke any agent. It is pure file IO over the
+#   triage output and is safe to call multiple times.
+_rounds_select_wave_1() {
+  local run_id="${1:-${RUN_ID:-}}"
+  local base="${LOG_BASE:-}"
+  [[ -n "$base" ]] || return 1
+
+  local seeds_file="$base/triage/investigation-seeds.txt"
+  if [[ ! -f "$seeds_file" ]]; then
+    return 1
+  fi
+
+  local wave_width
+  wave_width="$(_rounds_wave_width)"
+
+  local round0_dir="$base/rounds/round-0"
+  local dispatch_path="$round0_dir/dispatch.md"
+  local tmp_path="$dispatch_path.tmp.$$"
+
+  mkdir -p "$round0_dir" || return 1
+  : > "$tmp_path" || return 1
+  printf '# Wave-1 Dispatch (triage investigation seeds)\n\n' >> "$tmp_path"
+
+  local seed clean count=0
+  while IFS= read -r seed || [[ -n "$seed" ]]; do
+    [[ -n "$seed" ]] || continue
+    clean="$(_rounds_sanitize_seed "$seed")"
+    [[ -n "$clean" ]] || continue
+    count=$((count + 1))
+    if (( count > wave_width )); then
+      count=$wave_width
+      break
+    fi
+    printf 'GENERIC: role=broader focus="%s"\n' "$clean" >> "$tmp_path"
+  done < "$seeds_file"
+
+  if (( count == 0 )); then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  if ! mv "$tmp_path" "$dispatch_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  if declare -F log_info >/dev/null 2>&1; then
+    log_info "[round 1] Wave-1 selection wrote $count GENERIC dispatch(es) to $dispatch_path"
+  fi
+  return 0
+}
+
 run_rounds() {
   local rounds_total="$1" lens_list_var="$2"
   local -a lens_list=() active_lens_list=()
@@ -2017,6 +2112,17 @@ run_rounds() {
 
     if (( rounds_total > 1 )); then
       dispatch_path=""
+      if (( round == 1 )) \
+          && [[ "${MODE:-}" == "bugreport" ]] \
+          && [[ "${STRATEGY:-}" == "waves" || "${REPOLENS_STRATEGY:-}" == "waves" ]]; then
+        if _rounds_select_wave_1 "${RUN_ID:-}"; then
+          dispatch_path="${LOG_BASE:-}/rounds/round-0/dispatch.md"
+        else
+          if declare -F log_info >/dev/null 2>&1; then
+            log_info "[round 1] No usable investigation seeds; falling back to full-fanout lens list"
+          fi
+        fi
+      fi
       if (( round > 1 )); then
         local previous_round_dir
         previous_round_dir="$(round_dir "${RUN_ID:-}" "$((round - 1))")" || return $?
