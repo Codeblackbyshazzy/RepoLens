@@ -779,7 +779,7 @@ _rounds_meta_active_lens_entries() {
     fi
   done < <(
     jq -r --arg mode "$mode" --arg deploy_domain "$deploy_domain" \
-      '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$domains_file"
+      '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | (if type == "string" then {id: ., skip_modes: []} else . end) | select(((.skip_modes // []) | index($mode)) | not) | $d + "/" + .id' "$domains_file"
   )
 }
 

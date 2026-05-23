@@ -356,7 +356,7 @@ EOF
 
   # Parse all domains in one jq call
   local domain_data
-  domain_data="$(jq -r '.domains | sort_by(.order)[] | .id + "|" + .name + "|" + (.mode // "code") + "|" + (.lenses | join(","))' "$domains_file")"
+  domain_data="$(jq -r '.domains | sort_by(.order)[] | .id + "|" + .name + "|" + (.mode // "code") + "|" + ([.lenses[] | if type == "string" then . else .id end] | join(","))' "$domains_file")"
 
   local code_total=0 discover_total=0 deploy_total=0 opensource_total=0 content_total=0
   local code_output="" discover_output="" deploy_output="" opensource_output="" content_output=""
@@ -1634,11 +1634,11 @@ resolve_lenses() {
     local found_domain=""
     if [[ -n "$DOMAIN_FILTER" ]]; then
       found_domain="$(jq -r --arg lens "$FOCUS" --arg d "$DOMAIN_FILTER" --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
-        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.id == $d) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
+        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.id == $d) | select([.lenses[] | if type == "string" then . else .id end] | index($lens)) | .id' "$DOMAINS_FILE" | head -1)"
       [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domain '$DOMAIN_FILTER' (mode: $MODE)"
     else
       found_domain="$(jq -r --arg lens "$FOCUS" --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
-        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
+        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select([.lenses[] | if type == "string" then . else .id end] | index($lens)) | .id' "$DOMAINS_FILE" | head -1)"
       [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domains.json (mode: $MODE)"
     fi
 
@@ -1657,14 +1657,14 @@ resolve_lenses() {
     [[ -n "$domain_exists" ]] || die "Domain '$DOMAIN_FILTER' not found in domains.json (mode: $MODE)"
 
     jq -r --arg d "$DOMAIN_FILTER" \
-      '.domains[] | select(.id == $d) | .lenses[] | $d + "/" + .' "$DOMAINS_FILE"
+      '.domains[] | select(.id == $d) | .lenses[] | $d + "/" + (if type == "string" then . else .id end)' "$DOMAINS_FILE"
     return
   fi
 
   # All lenses — ordered by domain order
   local _all_lenses
   _all_lenses="$(jq -r --arg mode "$MODE" --arg deploy_domain "$deploy_domain" \
-    '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
+    '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | (if type == "string" then {id: ., skip_modes: []} else . end) | select(((.skip_modes // []) | index($mode)) | not) | $d + "/" + .id' "$DOMAINS_FILE")"
 
   # Issue #228: --relevant-domains <csv> deterministic allowlist. Operator-given
   # CSV of domain ids; intersects with the mode-filtered lens list. Validated
