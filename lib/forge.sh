@@ -465,6 +465,11 @@ forge_label_create() {
 #   Prints existing label names one per line and returns 0 on success.
 #   On provider/parse failure, prints nothing and returns non-zero so callers
 #   can fall back to best-effort create-all behavior.
+#
+#   gh  → `gh label list -R <owner/repo> --limit 1000 --json name`, parsed via jq.
+#   tea → `tea labels list ... --output json`, bound to
+#         $FORGE_PROJECT_PATH/$FORGE_REMOTE_NAME or $FORGE_TEA_LOGIN, parsed via jq.
+#   fj  → `fj -H <host> --style json repo labels <owner/repo> list`, parsed via jq.
 forge_label_list_names() {
   local repo="${1:-}"
   [[ -n "$repo" ]] \
@@ -496,6 +501,84 @@ forge_label_list_names() {
         _forge_warn "forge_label_list_names: jq failed to parse gh output for repo=$repo"
         return 1
       fi
+      return 0
+      ;;
+    tea)
+      local -a tea_target_flags=()
+      if [[ -n "${FORGE_PROJECT_PATH:-}" ]]; then
+        tea_target_flags=(--repo "$FORGE_PROJECT_PATH" --remote "${FORGE_REMOTE_NAME:-origin}")
+      elif [[ -n "${FORGE_TEA_LOGIN:-}" ]]; then
+        tea_target_flags=(--repo "$repo" --login "$FORGE_TEA_LOGIN")
+      else
+        die "forge_label_list_names: tea backend requires FORGE_PROJECT_PATH or FORGE_TEA_LOGIN for target binding"
+      fi
+
+      local tea_err tea_out tea_rc
+      tea_err="$(mktemp 2>/dev/null)" || tea_err=""
+      if [[ -n "$tea_err" ]]; then
+        tea_out="$(tea labels list "${tea_target_flags[@]}" --output json 2>"$tea_err")"
+        tea_rc=$?
+      else
+        tea_out="$(tea labels list "${tea_target_flags[@]}" --output json 2>/dev/null)"
+        tea_rc=$?
+      fi
+      if [[ "$tea_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$tea_err" && -s "$tea_err" ]]; then
+          first_err="$(head -n1 "$tea_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$tea_err" ]] && rm -f "$tea_err"
+        _forge_warn "forge_label_list_names: tea failed for repo=$repo rc=$tea_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$tea_err" ]] && rm -f "$tea_err"
+
+      local parsed
+      if ! parsed="$(printf '%s' "$tea_out" | jq -r '.[].name // empty' 2>/dev/null)"; then
+        _forge_warn "forge_label_list_names: jq failed to parse tea output for repo=$repo"
+        return 1
+      fi
+      if [[ -z "$parsed" && -n "$tea_out" && "$tea_out" != "[]" ]]; then
+        _forge_warn "forge_label_list_names: jq failed to parse tea output for repo=$repo"
+        return 1
+      fi
+      [[ -n "$parsed" ]] && printf '%s\n' "$parsed"
+      return 0
+      ;;
+    fj)
+      [[ -n "${FORGE_HOST:-}" ]] \
+        || die "forge_label_list_names: fj backend requires FORGE_HOST"
+
+      local fj_err fj_out fj_rc
+      fj_err="$(mktemp 2>/dev/null)" || fj_err=""
+      if [[ -n "$fj_err" ]]; then
+        fj_out="$(fj -H "$FORGE_HOST" --style json repo labels "$repo" list 2>"$fj_err")"
+        fj_rc=$?
+      else
+        fj_out="$(fj -H "$FORGE_HOST" --style json repo labels "$repo" list 2>/dev/null)"
+        fj_rc=$?
+      fi
+      if [[ "$fj_rc" -ne 0 ]]; then
+        local first_err=""
+        if [[ -n "$fj_err" && -s "$fj_err" ]]; then
+          first_err="$(head -n1 "$fj_err" 2>/dev/null || true)"
+        fi
+        [[ -n "$fj_err" ]] && rm -f "$fj_err"
+        _forge_warn "forge_label_list_names: fj failed for repo=$repo rc=$fj_rc err=${first_err:-<empty>}"
+        return 1
+      fi
+      [[ -n "$fj_err" ]] && rm -f "$fj_err"
+
+      local parsed
+      if ! parsed="$(printf '%s' "$fj_out" | jq -r '.[].name // empty' 2>/dev/null)"; then
+        _forge_warn "forge_label_list_names: jq failed to parse fj output for repo=$repo"
+        return 1
+      fi
+      if [[ -z "$parsed" && -n "$fj_out" && "$fj_out" != "[]" ]]; then
+        _forge_warn "forge_label_list_names: jq failed to parse fj output for repo=$repo"
+        return 1
+      fi
+      [[ -n "$parsed" ]] && printf '%s\n' "$parsed"
       return 0
       ;;
     *)
