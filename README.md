@@ -1,7 +1,7 @@
 # RepoLens
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Version: v0.1.0](https://img.shields.io/badge/version-v0.1.0-brightgreen.svg)](CHANGELOG.md)
+[![Version: v0.2.0](https://img.shields.io/badge/version-v0.2.0-brightgreen.svg)](CHANGELOG.md)
 [![CI](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml/badge.svg)](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/TheMorpheus407/RepoLens?style=social)](https://github.com/TheMorpheus407/RepoLens)
 

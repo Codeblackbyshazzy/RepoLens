@@ -18,6 +18,20 @@ RepoLens follows a **BDFL (Benevolent Dictator for Life)** model. The project ma
 
 Decisions are made transparently. Significant changes are discussed in [GitHub Issues](https://github.com/TheMorpheus407/RepoLens/issues) before implementation.
 
+## Release Cadence
+
+RepoLens releases happen when the `[Unreleased]` section of CHANGELOG.md grows non-trivial — loosely: a screen of bullets, or a user-facing feature lands, or a month has passed with active commits, whichever comes first.
+
+Releases are cut from master by the maintainer:
+
+1. Rename `[Unreleased]` to `[X.Y.Z] — YYYY-MM-DD` in CHANGELOG.md
+2. Bump `VERSION` in `repolens.sh`
+3. Update the README shields.io badge
+4. Tag the commit (`git tag -a vX.Y.Z`)
+5. Push the tag
+
+Releases are intentionally manual to keep the maintainer in the loop. Semver applies: bump **minor** for additive changes, **patch** for bug-only releases, **major** for breaking CLI or config changes. The `0.x` series allows the CLI surface to evolve; expect a `1.0.0` cut once the CLI surface has been stable across one full release cycle.
+
 ## Contribution Acceptance
 
 All contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution process (fork, branch, PR workflow, commit conventions, DCO sign-off).

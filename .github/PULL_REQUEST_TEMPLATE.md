@@ -22,6 +22,7 @@
 
 - [ ] `make check` passes
 - [ ] Tested against at least one real repository (if applicable)
+- [ ] CHANGELOG.md `[Unreleased]` updated for user-visible behavior changes (skip for internal-only changes)
 
 ## DCO Sign-Off
 

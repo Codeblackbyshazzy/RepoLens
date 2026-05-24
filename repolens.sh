@@ -60,7 +60,7 @@ source "$SCRIPT_DIR/lib/android.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/forge.sh"
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 show_version() {
   local sponsors_file="$SCRIPT_DIR/config/sponsors.json"

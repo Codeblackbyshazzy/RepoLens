@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+## [0.2.0] — 2026-05-24
+
 ### Security
 
 - `--spec` file content is now sanitized to prevent prompt injection via `<spec>`/`</spec>` tag breakout — a malicious spec file could previously close the content boundary early and inject arbitrary top-level instructions into the agent prompt ([#50](https://github.com/TheMorpheus407/RepoLens/issues/50))
@@ -63,7 +67,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Deprecated
 
-- `DONE_STREAK_REQUIRED` env var: superseded by `--depth`. The env var continues to work for the current release cycle (honored as a fallback when `--depth` is unset) and emits a deprecation warning at startup. Scheduled for removal in a future minor release (target version TBD, see the deprecation-policy ticket).
+- `DONE_STREAK_REQUIRED` env var: superseded by `--depth`. The env var continues to work for the current release cycle (honored as a fallback when `--depth` is unset) and emits a deprecation warning at startup. Scheduled for removal in a future minor release (target removal: v0.3.0).
 
 ### Backward compatibility
 
@@ -133,4 +137,6 @@ _This is the first public release. Previous development was private._
 - Test suite with 17 test suites
 - Modular library architecture (`lib/`)
 
+[Unreleased]: https://github.com/TheMorpheus407/RepoLens/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/TheMorpheus407/RepoLens/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TheMorpheus407/RepoLens/releases/tag/v0.1.0
