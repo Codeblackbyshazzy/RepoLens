@@ -64,9 +64,34 @@ init_summary() {
   "completed_at": null,
   "stopped_reason": null,
   "lenses": [],
-  "totals": {"lenses_run": 0, "iterations_total": 0, "issues_created": 0}
+  "totals": {"lenses_run": 0, "iterations_total": 0, "issues_created": 0, "findings_filtered": 0}
 }
 ENDJSON
+}
+
+# increment_findings_filtered <summary_file> [count]
+#   Adds to totals.findings_filtered. Missing files are ignored so library
+#   callers without an active summary can still use filtering helpers directly.
+increment_findings_filtered() {
+  local file="${1:-}" count="${2:-1}"
+  [[ -n "$file" && -f "$file" ]] || return 0
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  (( count > 0 )) || return 0
+  with_file_lock "${file}.lock" "${REPOLENS_SUMMARY_LOCK_TIMEOUT:-30}" \
+    _increment_findings_filtered_locked "$file" "$count"
+}
+
+_increment_findings_filtered_locked() {
+  local file="$1" count="$2"
+  local tmp
+
+  tmp="$(mktemp "${file}.tmp.XXXXXX")" || return 1
+  jq --argjson c "$count" \
+    '.totals.findings_filtered = ((.totals.findings_filtered // 0) + $c)' \
+    "$file" > "$tmp" && mv "$tmp" "$file"
+  local rc=$?
+  rm -f "$tmp" 2>/dev/null || true
+  return "$rc"
 }
 
 # record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues] [rate_limit_sleep_seconds]

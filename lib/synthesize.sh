@@ -156,6 +156,22 @@ _synthesize_content_mode_enabled() {
   [[ "$mode" == "content" ]]
 }
 
+_synthesize_log_min_severity_info() {
+  local message="$1"
+  if declare -F log_info >/dev/null 2>&1 && [[ -n "${_REPOLENS_LOG_FILE:-}" ]]; then
+    log_info "$message"
+  fi
+}
+
+_synthesize_log_min_severity_warn() {
+  local message="$1"
+  if declare -F log_warn >/dev/null 2>&1; then
+    log_warn "$message"
+  else
+    printf '[WARN] %s\n' "$message" >&2
+  fi
+}
+
 # _synthesize_filter_manifest_min_severity <manifest_path> <min_severity> [verification_path]
 #   Filters create-issue manifest entries below the configured severity
 #   threshold. Comment cross-link actions attached to valid severity-bearing
@@ -191,32 +207,37 @@ _synthesize_filter_manifest_min_severity() {
     }
   fi
 
-  if (( content_mode )); then
-    local invalid_content_entries
-    invalid_content_entries="$(jq -r '
-      def is_content_priority_proposal:
-        (.title // "" | test("^\\[[Pp][0-3]\\][[:space:]]*"));
-      def order: ["low","medium","high","critical"];
-      def rank($s): order | index($s);
-      .[]
-      | select(is_content_priority_proposal | not)
-      | select(rank(.severity) == null)
-      | if has("severity") then
-          "synthesize: dropping content audit finding with invalid severity " + (.severity | tostring) + ": " + (.title // "<untitled>")
-        else
-          "synthesize: dropping content audit finding with missing severity: " + (.title // "<untitled>")
-        end
-    ' "$manifest" 2>/dev/null)" || {
-      rm -f "$tmp" "$preserved_tmp"
-      return 1
-    }
-    if [[ -n "$invalid_content_entries" ]]; then
-      while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        echo "$line" >&2
-      done <<< "$invalid_content_entries"
-    fi
-  fi
+  local filter_decisions
+  filter_decisions="$(jq -c --arg min "$min_severity" --argjson content_mode "$content_mode" '
+    def is_content_priority_proposal:
+      (.title // "" | test("^\\[[Pp][0-3]\\][[:space:]]*"));
+    def order: ["low","medium","high","critical"];
+    def rank($s): order | index($s);
+    .[]
+    | select(type == "object")
+    | select(($content_mode == 1 and is_content_priority_proposal) | not)
+    | rank(.severity) as $severity_rank
+    | if $severity_rank == null then
+        {
+          type: "invalid",
+          domain: (.domain // "<unknown>" | tostring),
+          lens: (.lens // "<unknown>" | tostring),
+          title: (.title // "<untitled>" | tostring),
+          severity: (if has("severity") then (.severity // "" | tostring) else "" end)
+        }
+      elif $severity_rank < rank($min) then
+        {
+          type: "below",
+          domain: (.domain // "<unknown>" | tostring),
+          lens: (.lens // "<unknown>" | tostring),
+          title: (.title // "<untitled>" | tostring),
+          severity: (.severity | tostring)
+        }
+      else empty end
+  ' "$manifest" 2>/dev/null)" || {
+    rm -f "$tmp" "$preserved_tmp"
+    return 1
+  }
 
   if ! jq --arg min "$min_severity" --argjson content_mode "$content_mode" '
     def is_content_priority_proposal:
@@ -276,7 +297,36 @@ _synthesize_filter_manifest_min_severity() {
     }
   fi
 
-  mv "$tmp" "$manifest"
+  if ! mv "$tmp" "$manifest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  local filtered_count=0
+  if [[ -n "$filter_decisions" ]]; then
+    local decision decision_type domain lens title severity
+    while IFS= read -r decision; do
+      [[ -n "$decision" ]] || continue
+      decision_type="$(jq -r '.type' <<< "$decision")"
+      domain="$(jq -r '.domain' <<< "$decision")"
+      lens="$(jq -r '.lens' <<< "$decision")"
+      title="$(jq -r '.title' <<< "$decision")"
+      severity="$(jq -r '.severity' <<< "$decision")"
+      case "$decision_type" in
+        below)
+          _synthesize_log_min_severity_info "[$domain/$lens] Dropped finding \"$title\" (severity=$severity < min=$min_severity)"
+          ;;
+        invalid)
+          _synthesize_log_min_severity_warn "[$domain/$lens] Finding \"$title\" has invalid severity: \"$severity\" (expected critical, high, medium, or low) - skipping"
+          ;;
+      esac
+      filtered_count=$((filtered_count + 1))
+    done <<< "$filter_decisions"
+  fi
+
+  if (( filtered_count > 0 )) && [[ -n "${SUMMARY_FILE:-}" ]] && declare -F increment_findings_filtered >/dev/null 2>&1; then
+    increment_findings_filtered "$SUMMARY_FILE" "$filtered_count" || return 1
+  fi
 }
 
 # _synthesize_title_ngrams <normalized_title>
@@ -773,8 +823,7 @@ run_synthesizer() {
     return 1
   fi
 
-  local min_severity_filter_applied=0
-  if [[ -n "${REPOLENS_MIN_SEVERITY:-}" ]] && _synthesize_content_mode_enabled; then
+  if [[ -n "${REPOLENS_MIN_SEVERITY:-}" ]]; then
     if ! _synthesize_filter_manifest_min_severity "$candidate" "$REPOLENS_MIN_SEVERITY" "$final_dir/verification.json"; then
       echo "run_synthesizer: failed to apply min-severity filter" >&2
       rm -f "$candidate"
@@ -782,7 +831,6 @@ run_synthesizer() {
       rm -f "$final_dir/cross-link-actions.preserved.json"
       return 1
     fi
-    min_severity_filter_applied=1
   fi
 
   if ! validate_manifest "$candidate"; then
@@ -790,16 +838,6 @@ run_synthesizer() {
     rm -f "$final_dir/manifest.json"
     rm -f "$final_dir/cross-link-actions.preserved.json"
     return 5
-  fi
-
-  if [[ -n "${REPOLENS_MIN_SEVERITY:-}" && "$min_severity_filter_applied" -eq 0 ]]; then
-    if ! _synthesize_filter_manifest_min_severity "$candidate" "$REPOLENS_MIN_SEVERITY" "$final_dir/verification.json"; then
-      echo "run_synthesizer: failed to apply min-severity filter" >&2
-      rm -f "$candidate"
-      rm -f "$final_dir/manifest.json"
-      rm -f "$final_dir/cross-link-actions.preserved.json"
-      return 1
-    fi
   fi
 
   # Last line of defense: even if the synthesizer prompt is bypassed or buggy,
