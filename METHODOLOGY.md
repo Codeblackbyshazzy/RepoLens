@@ -123,11 +123,11 @@ The `--depth default` and `--rounds default` columns reflect the CLI defaults as
 
 | Mode | Purpose | Visible Lenses | `--depth` default | `--rounds` default |
 |------|---------|---------------|-------------------|--------------------|
-| **audit** | Find real issues in existing code | 243 (code + toolgate + logs domains) | 3 | 1 |
-| **feature** | Identify missing capabilities | 243 | 3 | 1 |
-| **bugfix** | Find bugs backed by evidence | 243 | 3 | 1 |
-| **bugreport** | Symptom-driven investigation: triage + rounds-driven lens dispatch + verifier + synthesizer. Requires `--bug-report <file\|text>` | 243 | 1 | 3 |
-| **custom** | Change impact analysis | 243 | 1 | 1 |
+| **audit** | Find real issues in existing code | 248 (code + toolgate + logs domains) | 3 | 1 |
+| **feature** | Identify missing capabilities | 248 | 3 | 1 |
+| **bugfix** | Find bugs backed by evidence | 248 | 3 | 1 |
+| **bugreport** | Symptom-driven investigation: triage + rounds-driven lens dispatch + verifier + synthesizer. Requires `--bug-report <file\|text>` | 248 | 1 | 3 |
+| **custom** | Change impact analysis | 248 | 1 | 1 |
 | **discover** | Brainstorm product ideas | 14 (discovery domain only) | 1 | 1 (locked) |
 | **deploy** | Read-only live-server inspection in local or remote SSH sub-modes, plus Android APK/source inspection | `deployment` domain (26 server lenses) or `android` domain (17 Android lenses, including `apk-dependencies`, `native-libraries`, `manifest-audit`, `network-security-config`, `exported-components`, `intent-filters`, `intent-fuzzing`, `drozer-attack-surface`, `logcat-leaks`, `ssl-pinning-mitm`, `frida-runtime`, `detection-bypass`, `keystore-extraction`, and `gradle-static-analysis`) | 1 | 1 (locked) |
 | **opensource** | Public release risk assessment | 13 (open-source readiness only) | 1 | 1 (locked) |

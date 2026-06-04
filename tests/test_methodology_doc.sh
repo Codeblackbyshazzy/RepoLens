@@ -120,6 +120,16 @@ if [[ -f "$METHODOLOGY" ]]; then
   methodology_content="$(cat "$METHODOLOGY")"
 fi
 
+mapfile -t cli_modes < <(
+  bash "$SCRIPT_DIR/repolens.sh" --help |
+    awk '
+      /^Modes:/ { in_modes = 1; next }
+      in_modes && /^$/ { exit }
+      in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
+    '
+)
+actual_mode_count="${#cli_modes[@]}"
+
 # =====================================================================
 # 2. v0.1 labeling — must be explicitly marked as draft/stub
 # =====================================================================
@@ -211,8 +221,8 @@ actual_domain_count="$(jq '.domains | length' "$DOMAINS_FILE")"
 assert_contains "contains actual domain count ($actual_domain_count)" "$actual_domain_count" "$methodology_content"
 
 echo ""
-echo "Test 20: Mode count — mentions 9 modes"
-assert_matches "mentions 9 modes" "9[[:space:]]+mode" "$methodology_content"
+echo "Test 20: Mode count matches CLI"
+assert_matches "mentions $actual_mode_count modes" "${actual_mode_count}[[:space:]]+mode" "$methodology_content"
 
 # =====================================================================
 # 7. DONE x3 streak content — section must explain the protocol
@@ -228,40 +238,14 @@ echo "Test 22: DONE streak section explains termination"
 assert_matches "explains termination" "(?i)(terminat|complet|exit|finish|stop)" "$methodology_content"
 
 # =====================================================================
-# 8. Mode isolation content — must reference the 9 modes
+# 8. Mode isolation content — must reference the CLI modes
 # =====================================================================
 
 echo ""
-echo "Test 23: Mode isolation references audit mode"
-assert_contains "references audit mode" "audit" "$methodology_content"
-
-echo ""
-echo "Test 24: Mode isolation references deploy mode"
-assert_contains "references deploy mode" "deploy" "$methodology_content"
-
-echo ""
-echo "Test 25: Mode isolation references discover mode"
-assert_contains "references discover mode" "discover" "$methodology_content"
-
-echo ""
-echo "Test 26: Mode isolation references custom mode"
-assert_contains "references custom mode" "custom" "$methodology_content"
-
-echo ""
-echo "Test 27: Mode isolation references opensource mode"
-assert_contains "references opensource mode" "opensource" "$methodology_content"
-
-echo ""
-echo "Test 28: Mode isolation references content mode"
-assert_contains "references content mode" "content" "$methodology_content"
-
-echo ""
-echo "Test 29: Mode isolation references feature mode"
-assert_contains "references feature mode" "feature" "$methodology_content"
-
-echo ""
-echo "Test 30: Mode isolation references bugfix mode"
-assert_contains "references bugfix mode" "bugfix" "$methodology_content"
+echo "Test 23: Mode isolation references every CLI mode"
+for mode in "${cli_modes[@]}"; do
+  assert_contains "references $mode mode" "$mode" "$methodology_content"
+done
 
 # =====================================================================
 # 9. Parallel execution content — must describe the model

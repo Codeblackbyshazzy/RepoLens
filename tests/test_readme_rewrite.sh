@@ -79,6 +79,16 @@ echo ""
 
 readme_content="$(cat "$README")"
 
+mapfile -t cli_modes < <(
+  bash "$SCRIPT_DIR/repolens.sh" --help |
+    awk '
+      /^Modes:/ { in_modes = 1; next }
+      in_modes && /^$/ { exit }
+      in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
+    '
+)
+actual_mode_count="${#cli_modes[@]}"
+
 # =====================================================================
 # 1. License badge — must say Apache-2.0, not MIT
 # =====================================================================
@@ -116,14 +126,15 @@ actual_domains="$(jq '.domains | length' "$DOMAINS_FILE")"
 assert_contains "README has actual domain count ($actual_domains)" "$actual_domains" "$readme_content"
 
 # =====================================================================
-# 4. All 9 modes documented
+# 4. All CLI modes documented
 # =====================================================================
 
 echo ""
-echo "Test 6: All 9 modes are documented as modes"
+echo "Test 6: All CLI modes are documented as modes"
+assert_contains "README current mode count sentence" "RepoLens supports $actual_mode_count modes." "$readme_content"
 # Each mode must appear backtick-quoted (e.g. `discover`) to count as documented as a mode,
 # not just mentioned as a random word (e.g. "discovery" or "deployment").
-for mode in audit feature bugfix bugreport discover deploy custom opensource content; do
+for mode in "${cli_modes[@]}"; do
   TOTAL=$((TOTAL + 1))
   if grep -qE "\`$mode\`" <<< "$readme_content"; then
     PASS=$((PASS + 1))
