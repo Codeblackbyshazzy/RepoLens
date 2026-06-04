@@ -19,6 +19,7 @@
 # observability for dry-run/local paths.
 # Issue #264: round digest markdown findings must provide the same
 # observability when filtered by min severity.
+# Issue #266: final stdout must report non-zero filtered finding counts.
 # shellcheck disable=SC2329
 
 set -uo pipefail
@@ -122,6 +123,31 @@ assert_file_not_matches() {
   fi
 }
 
+exact_line_count() {
+  local path="$1" expected="$2"
+  awk -v expected="$expected" '$0 == expected { count++ } END { print count + 0 }' "$path"
+}
+
+line_number_for() {
+  local path="$1" needle="$2"
+  awk -v needle="$needle" 'index($0, needle) { print NR; exit }' "$path"
+}
+
+line_number_for_exact() {
+  local path="$1" expected="$2"
+  awk -v expected="$expected" '$0 == expected { print NR; exit }' "$path"
+}
+
+assert_line_order() {
+  local desc="$1" earlier="$2" later="$3"
+  TOTAL=$((TOTAL + 1))
+  if [[ "$earlier" =~ ^[0-9]+$ && "$later" =~ ^[0-9]+$ && "$earlier" -lt "$later" ]]; then
+    pass_with "$desc"
+  else
+    fail_with "$desc" "Expected line $earlier before line $later"
+  fi
+}
+
 finish() {
   echo ""
   echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
@@ -162,10 +188,14 @@ TMP_PARENT="$SCRIPT_DIR/tests/logs/test-min-severity-observability"
 mkdir -p "$TMP_PARENT"
 TMPDIR="$(mktemp -d "$TMP_PARENT/run.XXXXXX")"
 RUN_LOG_DIR=""
+zero_run_log_dir=""
 
 cleanup() {
   if [[ -n "$RUN_LOG_DIR" ]]; then
     rm -rf "$RUN_LOG_DIR"
+  fi
+  if [[ -n "$zero_run_log_dir" ]]; then
+    rm -rf "$zero_run_log_dir"
   fi
   rm -rf "$TMPDIR"
   rmdir "$TMP_PARENT" 2>/dev/null || true
@@ -487,6 +517,11 @@ root_cause_category: fixture-kept
 High-severity local markdown finding kept by the threshold.
 MD
 
+if [[ "${REPOLENS_LOCAL_OBSERVABILITY_FIXTURE:-filtered}" == "kept-only" ]]; then
+  printf 'DONE\nWrote local markdown no-filter observability fixture finding.\nDONE\n'
+  exit 0
+fi
+
 cat > "$output_dir/002-dropped-low.md" <<'MD'
 ---
 title: "[LOW] Dropped low"
@@ -592,6 +627,12 @@ fi
 local_agent_calls="$(wc -l < "$LOCAL_AGENT_LOG" | tr -d ' ')"
 local_filtered_count="$(jq -r '.totals.findings_filtered // "missing"' "$local_summary_file" 2>/dev/null || true)"
 local_issues_count="$(jq -r '.totals.issues_created // "missing"' "$local_summary_file" 2>/dev/null || true)"
+expected_local_filtered_count="4"
+local_filtered_stdout_line="Findings filtered by --min-severity: $expected_local_filtered_count"
+local_filtered_stdout_count="$(exact_line_count "$local_run_output" "$local_filtered_stdout_line")"
+local_summary_finalized_line="$(line_number_for "$local_run_output" "Summary: $local_summary_file")"
+local_filtered_stdout_line_number="$(line_number_for_exact "$local_run_output" "$local_filtered_stdout_line")"
+local_final_json_header_line="$(line_number_for_exact "$local_run_output" "=== RepoLens Run Summary ===")"
 
 assert_success "fake-agent local markdown run succeeds with min severity high" "$local_run_status"
 assert_eq "local run id is discoverable" "set" "$([[ -n "$local_run_id" ]] && printf 'set' || printf 'missing')"
@@ -604,7 +645,58 @@ assert_file_matches "low local markdown drop info log has security/injection att
 assert_file_matches "medium local markdown drop info log has code-quality/naming attribution" "$local_log_file" '\[INFO\].*\[code-quality/naming\] Dropped finding "\[MEDIUM\] Dropped medium" \(severity=medium < min=high\)'
 assert_file_matches "missing severity local markdown warning has code-quality/complexity attribution" "$local_log_file" '\[WARN\].*\[code-quality/complexity\] Finding "\[HIGH\] Missing severity" has invalid severity: "" \(expected critical, high, medium, or low\) - skipping'
 assert_file_matches "unknown severity local markdown warning has security/cryptography attribution" "$local_log_file" '\[WARN\].*\[security/cryptography\] Finding "\[URGENT\] Unknown severity" has invalid severity: "urgent" \(expected critical, high, medium, or low\) - skipping'
-assert_eq "summary counts every filtered local markdown finding" "4" "$local_filtered_count"
+assert_eq "summary counts every filtered local markdown finding" "$expected_local_filtered_count" "$local_filtered_count"
+assert_eq "final stdout reports the filtered local markdown count once" "1" "$local_filtered_stdout_count"
+assert_line_order "filtered stdout appears after summary finalization output" "$local_summary_finalized_line" "$local_filtered_stdout_line_number"
+assert_line_order "filtered stdout appears before final JSON dump" "$local_filtered_stdout_line_number" "$local_final_json_header_line"
+
+echo ""
+echo "=== final stdout omits zero filtered count ==="
+
+zero_agent_log="$TMPDIR/local-zero-agent.log"
+: > "$zero_agent_log"
+zero_run_output="$TMPDIR/local-zero-repolens-output.txt"
+PATH="$FAKE_BIN:$PATH" \
+  REPOLENS_AGENT_TIMEOUT=10 \
+  REPOLENS_AGENT_KILL_GRACE=1 \
+  REPOLENS_LOCAL_OBSERVABILITY_AGENT_LOG="$zero_agent_log" \
+  REPOLENS_LOCAL_OBSERVABILITY_FIXTURE=kept-only \
+  bash "$SCRIPT_DIR/repolens.sh" \
+    --project "$PROJECT_DIR" \
+    --agent codex \
+    --local \
+    --mode bugreport \
+    --bug-report "$BUG_FILE" \
+    --focus injection \
+    --rounds 1 \
+    --depth 1 \
+    --no-triage \
+    --no-verifier \
+    --yes \
+    --min-severity high \
+    >"$zero_run_output" 2>&1
+zero_run_status=$?
+
+zero_run_id="$(sed -n 's/.*RepoLens run \([^ ]*\) complete.*/\1/p' "$zero_run_output" | tail -1)"
+if [[ -n "$zero_run_id" ]]; then
+  zero_run_log_dir="$SCRIPT_DIR/logs/$zero_run_id"
+fi
+
+zero_summary_file="$TMPDIR/missing-zero-summary.json"
+if [[ -n "$zero_run_log_dir" ]]; then
+  zero_summary_file="$zero_run_log_dir/summary.json"
+fi
+
+zero_agent_calls="$(wc -l < "$zero_agent_log" | tr -d ' ')"
+zero_filtered_count="$(jq -r '.totals.findings_filtered // "missing"' "$zero_summary_file" 2>/dev/null || true)"
+zero_issues_count="$(jq -r '.totals.issues_created // "missing"' "$zero_summary_file" 2>/dev/null || true)"
+
+assert_success "fake-agent kept-only local run succeeds with min severity high" "$zero_run_status"
+assert_eq "kept-only local run id is discoverable" "set" "$([[ -n "$zero_run_id" ]] && printf 'set' || printf 'missing')"
+assert_eq "fake kept-only local agent is invoked exactly once" "1" "$zero_agent_calls"
+assert_eq "kept-only local dry-run count records the high finding" "1" "$zero_issues_count"
+assert_eq "summary records zero filtered local markdown findings" "0" "$zero_filtered_count"
+assert_file_not_matches "final stdout omits filtered count when no findings are filtered" "$zero_run_output" '^Findings filtered by --min-severity:'
 
 echo ""
 echo "=== local markdown filtered summary dedupe ==="

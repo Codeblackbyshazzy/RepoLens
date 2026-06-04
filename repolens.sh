@@ -3161,6 +3161,11 @@ log_info "RepoLens run $RUN_ID complete"
 log_info "Summary: $SUMMARY_FILE"
 log_info "=============================="
 
+FINAL_FINDINGS_FILTERED="$(jq -r '.totals.findings_filtered // 0' "$SUMMARY_FILE" 2>/dev/null || printf '0')"
+if [[ "$FINAL_FINDINGS_FILTERED" =~ ^[0-9]+$ ]] && (( 10#$FINAL_FINDINGS_FILTERED > 0 )); then
+  echo "Findings filtered by --min-severity: $FINAL_FINDINGS_FILTERED"
+fi
+
 # Print summary to stdout
 echo ""
 echo "=== RepoLens Run Summary ==="
