@@ -2227,6 +2227,12 @@ _rounds_agent_abort_reason() {
   return 1
 }
 
+_rounds_remote_check_master() {
+  [[ -n "${REMOTE_TARGET:-}" ]] || return 0
+  declare -F remote_check_master >/dev/null 2>&1 || return 0
+  remote_check_master
+}
+
 _rounds_build_prior_digest_context() {
   local run_id="$1" current_round="$2"
   local prior_digest context_path context_dir previous_round digest_path
@@ -2529,6 +2535,14 @@ run_rounds() {
           set_stop_reason "$SUMMARY_FILE" "$abort_reason"
           break
         fi
+        if ! _rounds_remote_check_master; then
+          log_warn "Remote ControlMaster unavailable. Skipping remaining lenses."
+          _rounds_record_skipped_lenses "${active_lens_list[@]:$parallel_count}"
+          set_stop_reason "$SUMMARY_FILE" "remote-controlmaster-lost"
+          wait_all || true
+          _rounds_restore_completed_lenses_file "$had_completed_lenses_file" "$original_completed_lenses_file"
+          return 1
+        fi
         parallel_count=$((parallel_count + 1))
         if ! spawn_lens "$lens_entry" run_lens "$lens_entry"; then
           if abort_reason="$(_rounds_agent_abort_reason)"; then
@@ -2568,6 +2582,14 @@ run_rounds() {
           _rounds_record_skipped_lenses "${active_lens_list[@]:$local_count}"
           set_stop_reason "$SUMMARY_FILE" "max-issues-reached"
           break
+        fi
+
+        if ! _rounds_remote_check_master; then
+          log_warn "Remote ControlMaster unavailable. Skipping remaining lenses."
+          _rounds_record_skipped_lenses "${active_lens_list[@]:$local_count}"
+          set_stop_reason "$SUMMARY_FILE" "remote-controlmaster-lost"
+          _rounds_restore_completed_lenses_file "$had_completed_lenses_file" "$original_completed_lenses_file"
+          return 1
         fi
 
         local_count=$((local_count + 1))

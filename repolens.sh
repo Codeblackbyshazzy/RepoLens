@@ -34,6 +34,8 @@ source "$SCRIPT_DIR/lib/core.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/logging.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/remote.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/streak.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/template.sh"
@@ -1097,7 +1099,11 @@ _cleanup_all() {
   if $HOSTED 2>/dev/null; then
     cleanup_hosted "${RUN_ID:-}" 2>/dev/null
   fi
-  _cleanup_remote_control_socket 2>/dev/null || true
+  if declare -F remote_close_master >/dev/null 2>&1; then
+    remote_close_master 2>/dev/null || true
+  else
+    _cleanup_remote_control_socket 2>/dev/null || true
+  fi
   _cleanup_clone
 }
 trap _cleanup_all EXIT
@@ -1599,38 +1605,7 @@ if [[ "$MODE" == "deploy" && "${TARGET_TYPE:-server}" == "android" && -n "${ANDR
 fi
 
 run_remote_preflight() {
-  [[ -n "${REMOTE_TARGET:-}" ]] || return 0
-
-  local remote_dir="$LOG_BASE/.remote"
-  local preflight_log="$remote_dir/preflight.log"
-  local ssh_args=(
-    -o BatchMode=yes
-    -o ConnectTimeout=5
-    -o ControlMaster=auto
-    -o ControlPath="$REPOLENS_REMOTE_SSH_SOCKET"
-    -o ControlPersist=600
-  )
-  local ssh_target="$REMOTE_HOST"
-
-  mkdir -p "$remote_dir"
-  if [[ -n "${REMOTE_KEY:-}" ]]; then
-    ssh_args+=(-i "$REMOTE_KEY")
-  fi
-  if [[ -n "${REMOTE_PORT:-}" ]]; then
-    ssh_args+=(-p "$REMOTE_PORT")
-  fi
-  if [[ -n "${REMOTE_USER:-}" ]]; then
-    ssh_target="${REMOTE_USER}@${REMOTE_HOST}"
-  fi
-
-  if ssh "${ssh_args[@]}" "$ssh_target" 'hostname && uname -a' > "$preflight_log" 2>&1; then
-    log_info "Remote preflight captured: $preflight_log"
-    return 0
-  fi
-
-  local preflight_rc=$?
-  log_warn "Remote preflight failed for $REMOTE_TARGET (exit $preflight_rc); see $preflight_log"
-  return "$preflight_rc"
+  remote_preflight
 }
 
 [[ "$MODE" == "custom" ]] && log_info "Custom mode: change impact analysis (DONE streak: 1)"
@@ -2453,7 +2428,11 @@ fi
 confirm_autonomous_mode
 confirm_deploy_authorization
 confirm_run
-run_remote_preflight || true
+if [[ -n "${REMOTE_TARGET:-}" ]]; then
+  if run_remote_preflight; then
+    remote_open_master || die "Remote ControlMaster failed for $REMOTE_TARGET"
+  fi
+fi
 maybe_build_android_apk_after_gates
 
 # --- Ensure forge labels ---
