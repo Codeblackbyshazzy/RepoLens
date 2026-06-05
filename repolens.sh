@@ -1342,11 +1342,15 @@ if [[ -n "$MIN_SEVERITY" ]]; then
   MIN_SEVERITY="$(severity_normalize "$MIN_SEVERITY")"
   [[ -n "$MIN_SEVERITY" ]] || die "--min-severity must be one of critical, high, medium, low; got: $MIN_SEVERITY_RAW"
 fi
-MIN_SEVERITY_DISCOVER_EXEMPT=false
-if [[ "$MODE" == "discover" && -n "$MIN_SEVERITY" ]]; then
-  MIN_SEVERITY_DISCOVER_EXEMPT=true
-  MIN_SEVERITY=""
-fi
+MIN_SEVERITY_MODE_EXEMPT=""
+case "$MODE" in
+  discover|feature)
+    if [[ -n "$MIN_SEVERITY" ]]; then
+      MIN_SEVERITY_MODE_EXEMPT="$MODE"
+      MIN_SEVERITY=""
+    fi
+    ;;
+esac
 REPOLENS_MIN_SEVERITY="$MIN_SEVERITY"
 export REPOLENS_MIN_SEVERITY
 
@@ -1584,8 +1588,8 @@ log_info "Agent timeout kill grace: ${AGENT_KILL_GRACE_SECS}s"
 log_info "Lens wall-clock budget: ${LENS_MAX_WALL_SECS}s"
 [[ -n "$SPEC_FILE" ]] && log_info "Spec: $SPEC_FILE"
 [[ -n "$MAX_ISSUES" ]] && log_info "Max issues: $MAX_ISSUES (DONE streak: 1)"
-if $MIN_SEVERITY_DISCOVER_EXEMPT; then
-  log_warn "--min-severity has no effect in discover mode (this mode does not use severity)"
+if [[ -n "$MIN_SEVERITY_MODE_EXEMPT" ]]; then
+  log_warn "--min-severity has no effect in ${MIN_SEVERITY_MODE_EXEMPT} mode (this mode does not use severity)"
 fi
 [[ -n "$MIN_SEVERITY" ]] && log_info "Min severity: $MIN_SEVERITY"
 [[ "$MODE" == "discover" ]] && log_info "Discover mode: single-pass brainstorming (DONE streak: 1)"

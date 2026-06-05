@@ -15,6 +15,7 @@
 
 # Issue #268: --min-severity is accepted in discover mode, but discover
 # findings are effort-sized ideas rather than severity-ranked findings.
+# Issue #269: feature mode follows the same no-effect contract.
 
 set -uo pipefail
 
@@ -130,12 +131,14 @@ finish() {
   fi
 }
 
-echo "=== discover min-severity mode exemption ==="
+echo "=== min-severity mode exemptions ==="
 
 mkdir -p "$SCRIPT_DIR/logs"
 TMPDIR="$(mktemp -d "$SCRIPT_DIR/logs/test-min-severity-mode-exempt.XXXXXX")"
 RUN_LOG_DIR=""
 ENV_RUN_LOG_DIR=""
+FEATURE_RUN_LOG_DIR=""
+FEATURE_ENV_RUN_LOG_DIR=""
 
 cleanup() {
   if [[ -n "$RUN_LOG_DIR" ]]; then
@@ -144,6 +147,12 @@ cleanup() {
   if [[ -n "$ENV_RUN_LOG_DIR" ]]; then
     rm -rf "$ENV_RUN_LOG_DIR"
   fi
+  if [[ -n "$FEATURE_RUN_LOG_DIR" ]]; then
+    rm -rf "$FEATURE_RUN_LOG_DIR"
+  fi
+  if [[ -n "$FEATURE_ENV_RUN_LOG_DIR" ]]; then
+    rm -rf "$FEATURE_ENV_RUN_LOG_DIR"
+  fi
   rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
@@ -151,8 +160,11 @@ trap cleanup EXIT
 PROJECT_DIR="$TMPDIR/project"
 FAKE_BIN="$TMPDIR/bin"
 AGENT_LOG="$TMPDIR/agent.log"
+FEATURE_AGENT_LOG="$TMPDIR/feature-agent.log"
 RUN_OUTPUT="$TMPDIR/repolens-output.txt"
 ENV_RUN_OUTPUT="$TMPDIR/repolens-env-output.txt"
+FEATURE_RUN_OUTPUT="$TMPDIR/repolens-feature-output.txt"
+FEATURE_ENV_RUN_OUTPUT="$TMPDIR/repolens-feature-env-output.txt"
 mkdir -p "$PROJECT_DIR" "$FAKE_BIN"
 
 git -C "$PROJECT_DIR" init -q
@@ -162,6 +174,7 @@ git -C "$PROJECT_DIR" -c user.name='RepoLens Test' -c user.email='repolens@examp
 
 ln -s "$SCRIPT_DIR/tests/mock-agent.sh" "$FAKE_BIN/codex"
 : > "$AGENT_LOG"
+: > "$FEATURE_AGENT_LOG"
 
 PATH="$FAKE_BIN:$PATH" \
   REPOLENS_AGENT_TIMEOUT=10 \
@@ -206,6 +219,49 @@ if [[ -n "$env_run_id" ]]; then
   ENV_RUN_LOG_DIR="$SCRIPT_DIR/logs/$env_run_id"
 fi
 
+PATH="$FAKE_BIN:$PATH" \
+  REPOLENS_AGENT_TIMEOUT=10 \
+  REPOLENS_AGENT_KILL_GRACE=1 \
+  REPOLENS_MOCK_AGENT_LOG="$FEATURE_AGENT_LOG" \
+  REPOLENS_MOCK_AGENT_FINDINGS=2 \
+  bash "$SCRIPT_DIR/repolens.sh" \
+    --project "$PROJECT_DIR" \
+    --agent codex \
+    --local \
+    --mode feature \
+    --focus injection \
+    --depth 1 \
+    --yes \
+    --min-severity high \
+    >"$FEATURE_RUN_OUTPUT" 2>&1
+feature_run_status=$?
+
+feature_run_id="$(sed -n 's/.*RepoLens run \([^ ]*\) complete.*/\1/p' "$FEATURE_RUN_OUTPUT" | tail -1)"
+if [[ -n "$feature_run_id" ]]; then
+  FEATURE_RUN_LOG_DIR="$SCRIPT_DIR/logs/$feature_run_id"
+fi
+
+PATH="$FAKE_BIN:$PATH" \
+  REPOLENS_AGENT_TIMEOUT=10 \
+  REPOLENS_AGENT_KILL_GRACE=1 \
+  REPOLENS_MIN_SEVERITY=HIGH \
+  bash "$SCRIPT_DIR/repolens.sh" \
+    --project "$PROJECT_DIR" \
+    --agent codex \
+    --local \
+    --dry-run \
+    --mode feature \
+    --focus injection \
+    --depth 1 \
+    --yes \
+    >"$FEATURE_ENV_RUN_OUTPUT" 2>&1
+feature_env_run_status=$?
+
+feature_env_run_id="$(sed -n 's/.*RepoLens run \([^ ]*\) starting.*/\1/p' "$FEATURE_ENV_RUN_OUTPUT" | tail -1)"
+if [[ -n "$feature_env_run_id" ]]; then
+  FEATURE_ENV_RUN_LOG_DIR="$SCRIPT_DIR/logs/$feature_env_run_id"
+fi
+
 summary_file="$TMPDIR/missing-summary.json"
 if [[ -n "$RUN_LOG_DIR" ]]; then
   summary_file="$RUN_LOG_DIR/summary.json"
@@ -229,6 +285,30 @@ issues_created="$(jq -r '.totals.issues_created // "missing"' "$summary_file" 2>
 first_finding="$local_output_dir/discovery/product-gaps/001-mock-finding-product-gaps-r1-1.md"
 second_finding="$local_output_dir/discovery/product-gaps/002-mock-finding-product-gaps-r1-2.md"
 
+feature_summary_file="$TMPDIR/missing-feature-summary.json"
+if [[ -n "$FEATURE_RUN_LOG_DIR" ]]; then
+  feature_summary_file="$FEATURE_RUN_LOG_DIR/summary.json"
+fi
+
+feature_local_output_dir=""
+if [[ -f "$feature_summary_file" ]]; then
+  feature_local_output_dir="$(jq -r '.output_dir // empty' "$feature_summary_file" 2>/dev/null || true)"
+fi
+[[ -n "$feature_local_output_dir" ]] || feature_local_output_dir="$TMPDIR/missing-feature-output"
+
+feature_warning_text="--min-severity has no effect in feature mode (this mode does not use severity)"
+feature_warning_count="$(line_count_contains "$FEATURE_RUN_OUTPUT" "$feature_warning_text")"
+feature_env_warning_count="$(line_count_contains "$FEATURE_ENV_RUN_OUTPUT" "$feature_warning_text")"
+feature_warning_line="$(line_number_for "$FEATURE_RUN_OUTPUT" "$feature_warning_text")"
+feature_lens_start_line="$(line_number_for "$FEATURE_RUN_OUTPUT" "[security/injection] Starting lens")"
+feature_agent_calls="$(wc -l < "$FEATURE_AGENT_LOG" | tr -d ' ')"
+feature_findings_filtered="$(jq -r '.totals.findings_filtered // "missing"' "$feature_summary_file" 2>/dev/null || true)"
+feature_issues_created="$(jq -r '.totals.issues_created // "missing"' "$feature_summary_file" 2>/dev/null || true)"
+
+feature_first_finding="$feature_local_output_dir/security/injection/001-mock-finding-injection-r1-1.md"
+feature_second_finding="$feature_local_output_dir/security/injection/002-mock-finding-injection-r1-2.md"
+feature_prompt_file="$(dirname "$feature_local_output_dir")/captured-prompts/security__injection.prompt.md"
+
 assert_success "fake-agent discover run succeeds with min severity high" "$run_status"
 assert_eq "discover run id is discoverable" "set" "$([[ -n "$run_id" ]] && printf 'set' || printf 'missing')"
 assert_eq "fake discover agent is invoked exactly once" "1" "$agent_calls"
@@ -247,5 +327,26 @@ assert_eq "summary records zero min-severity filtered discover findings" "0" "$f
 assert_success "env fallback discover dry-run succeeds" "$env_run_status"
 assert_eq "env fallback discover logs the no-effect warning exactly once" "1" "$env_warning_count"
 assert_file_not_contains "env fallback discover does not advertise an active min-severity filter" "$ENV_RUN_OUTPUT" "Min severity: high"
+
+assert_success "fake-agent feature run succeeds with min severity high" "$feature_run_status"
+assert_eq "feature run id is discoverable" "set" "$([[ -n "$feature_run_id" ]] && printf 'set' || printf 'missing')"
+assert_eq "fake feature agent is invoked exactly once" "1" "$feature_agent_calls"
+assert_eq "feature mode logs the min-severity no-effect warning exactly once" "1" "$feature_warning_count"
+assert_line_order "feature min-severity warning is emitted before lens execution" "$feature_warning_line" "$feature_lens_start_line"
+assert_file_not_contains "feature startup does not advertise an active min-severity filter" "$FEATURE_RUN_OUTPUT" "Min severity: high"
+assert_file_not_contains "feature output does not log dropped findings" "$FEATURE_RUN_OUTPUT" "Dropped finding"
+assert_file_not_contains "feature output does not report filtered stdout" "$FEATURE_RUN_OUTPUT" "Findings filtered by --min-severity:"
+assert_file_exists "feature summary.json is written" "$feature_summary_file"
+assert_dir_exists "feature local output directory is recorded in summary" "$feature_local_output_dir"
+assert_file_exists "first low-severity feature fixture finding is preserved" "$feature_first_finding"
+assert_file_exists "second low-severity feature fixture finding is preserved" "$feature_second_finding"
+assert_file_contains "feature fixture finding is below the high threshold" "$feature_first_finding" "severity: low"
+assert_file_exists "feature rendered prompt is captured" "$feature_prompt_file"
+assert_file_not_contains "feature rendered prompt omits min-severity instructions" "$feature_prompt_file" "## Minimum Severity"
+assert_eq "summary preserves both emitted feature findings" "2" "$feature_issues_created"
+assert_eq "summary records zero min-severity filtered feature findings" "0" "$feature_findings_filtered"
+assert_success "env fallback feature dry-run succeeds" "$feature_env_run_status"
+assert_eq "env fallback feature logs the no-effect warning exactly once" "1" "$feature_env_warning_count"
+assert_file_not_contains "env fallback feature does not advertise an active min-severity filter" "$FEATURE_ENV_RUN_OUTPUT" "Min severity: high"
 
 finish
