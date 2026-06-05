@@ -3242,6 +3242,8 @@ if [[ "$RUN_ROUNDS_RC" -eq 0 && "$MODE" == "bugreport" && "${ROUNDS:-1}" -gt 1 ]
 
         if (( filing_failed > 0 || filing_missing > 0 )); then
           log_warn "Filing: incomplete batch (failed=$filing_failed, dedup=$filing_dedup, missing=$filing_missing)"
+          REPOLENS_FINAL_STATE="failed"
+          set_stop_reason "$SUMMARY_FILE" "filing-failed"
           RUN_ROUNDS_RC=1
         else
           log_info "Filing: batch complete"
@@ -3251,6 +3253,8 @@ if [[ "$RUN_ROUNDS_RC" -eq 0 && "$MODE" == "bugreport" && "${ROUNDS:-1}" -gt 1 ]
           [[ -n "$filing_line" ]] && log_warn "Filing: $filing_line"
         done <<< "$filing_output"
         log_warn "Filing: failed to dispatch synthesized manifest"
+        REPOLENS_FINAL_STATE="failed"
+        set_stop_reason "$SUMMARY_FILE" "filing-failed"
         RUN_ROUNDS_RC=1
       fi
     fi

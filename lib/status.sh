@@ -177,7 +177,7 @@ _write_status_snapshot_locked() {
   local status_file="$log_base/status.json"
   local tmp_file="${status_file}.tmp.${BASHPID}"
   local active_tmp completed_tmp lenses_tmp
-  local now_iso now_epoch started_at issues_created health next_action_earliest_at
+  local now_iso now_epoch started_at issues_created health stopped_reason next_action_earliest_at
   local heartbeat_file
 
   if [[ "$state" == "running" && -f "$status_file" && "${REPOLENS_STATUS_ALLOW_RUNNING_OVER_TERMINAL:-false}" != "true" ]]; then
@@ -219,6 +219,10 @@ _write_status_snapshot_locked() {
   health=""
   if [[ -f "$summary_file" ]]; then
     health="$(jq -r '.health // empty' "$summary_file" 2>/dev/null || true)"
+  fi
+  stopped_reason=""
+  if [[ -f "$summary_file" ]]; then
+    stopped_reason="$(jq -r '.stopped_reason // empty' "$summary_file" 2>/dev/null || true)"
   fi
   next_action_earliest_at=""
   if [[ "$state" == "rate-limit-pending" ]]; then
@@ -301,6 +305,7 @@ _write_status_snapshot_locked() {
     --arg updated_at "$now_iso" \
     --arg state "$state" \
     --arg health "$health" \
+    --arg stopped_reason "$stopped_reason" \
     --arg next_action_earliest_at "$next_action_earliest_at" \
     --argjson issues_created "$issues_created" \
     --slurpfile active_raw <(jq -s 'sort_by(.domain, .lens_id)' "$active_tmp" 2>/dev/null || printf '[]') \
@@ -335,6 +340,7 @@ _write_status_snapshot_locked() {
           updated_at: $updated_at,
           state: $state,
           health: (if $health == "" then null else $health end),
+          stopped_reason: (if $stopped_reason == "" then null else $stopped_reason end),
           total_lenses: $total,
           counts: {
             queued: ($queued | length),
