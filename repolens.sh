@@ -1344,7 +1344,7 @@ if [[ -n "$MIN_SEVERITY" ]]; then
 fi
 MIN_SEVERITY_MODE_EXEMPT=""
 case "$MODE" in
-  discover|feature)
+  discover|feature|custom)
     if [[ -n "$MIN_SEVERITY" ]]; then
       MIN_SEVERITY_MODE_EXEMPT="$MODE"
       MIN_SEVERITY=""

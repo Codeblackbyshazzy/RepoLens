@@ -16,6 +16,7 @@
 # Issue #268: --min-severity is accepted in discover mode, but discover
 # findings are effort-sized ideas rather than severity-ranked findings.
 # Issue #269: feature mode follows the same no-effect contract.
+# Issue #270: custom mode follows the same no-effect contract.
 
 set -uo pipefail
 
@@ -139,6 +140,8 @@ RUN_LOG_DIR=""
 ENV_RUN_LOG_DIR=""
 FEATURE_RUN_LOG_DIR=""
 FEATURE_ENV_RUN_LOG_DIR=""
+CUSTOM_RUN_LOG_DIR=""
+CUSTOM_ENV_RUN_LOG_DIR=""
 
 cleanup() {
   if [[ -n "$RUN_LOG_DIR" ]]; then
@@ -153,6 +156,12 @@ cleanup() {
   if [[ -n "$FEATURE_ENV_RUN_LOG_DIR" ]]; then
     rm -rf "$FEATURE_ENV_RUN_LOG_DIR"
   fi
+  if [[ -n "$CUSTOM_RUN_LOG_DIR" ]]; then
+    rm -rf "$CUSTOM_RUN_LOG_DIR"
+  fi
+  if [[ -n "$CUSTOM_ENV_RUN_LOG_DIR" ]]; then
+    rm -rf "$CUSTOM_ENV_RUN_LOG_DIR"
+  fi
   rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
@@ -161,10 +170,13 @@ PROJECT_DIR="$TMPDIR/project"
 FAKE_BIN="$TMPDIR/bin"
 AGENT_LOG="$TMPDIR/agent.log"
 FEATURE_AGENT_LOG="$TMPDIR/feature-agent.log"
+CUSTOM_AGENT_LOG="$TMPDIR/custom-agent.log"
 RUN_OUTPUT="$TMPDIR/repolens-output.txt"
 ENV_RUN_OUTPUT="$TMPDIR/repolens-env-output.txt"
 FEATURE_RUN_OUTPUT="$TMPDIR/repolens-feature-output.txt"
 FEATURE_ENV_RUN_OUTPUT="$TMPDIR/repolens-feature-env-output.txt"
+CUSTOM_RUN_OUTPUT="$TMPDIR/repolens-custom-output.txt"
+CUSTOM_ENV_RUN_OUTPUT="$TMPDIR/repolens-custom-env-output.txt"
 mkdir -p "$PROJECT_DIR" "$FAKE_BIN"
 
 git -C "$PROJECT_DIR" init -q
@@ -175,6 +187,7 @@ git -C "$PROJECT_DIR" -c user.name='RepoLens Test' -c user.email='repolens@examp
 ln -s "$SCRIPT_DIR/tests/mock-agent.sh" "$FAKE_BIN/codex"
 : > "$AGENT_LOG"
 : > "$FEATURE_AGENT_LOG"
+: > "$CUSTOM_AGENT_LOG"
 
 PATH="$FAKE_BIN:$PATH" \
   REPOLENS_AGENT_TIMEOUT=10 \
@@ -262,6 +275,51 @@ if [[ -n "$feature_env_run_id" ]]; then
   FEATURE_ENV_RUN_LOG_DIR="$SCRIPT_DIR/logs/$feature_env_run_id"
 fi
 
+PATH="$FAKE_BIN:$PATH" \
+  REPOLENS_AGENT_TIMEOUT=10 \
+  REPOLENS_AGENT_KILL_GRACE=1 \
+  REPOLENS_MOCK_AGENT_LOG="$CUSTOM_AGENT_LOG" \
+  REPOLENS_MOCK_AGENT_FINDINGS=2 \
+  bash "$SCRIPT_DIR/repolens.sh" \
+    --project "$PROJECT_DIR" \
+    --agent codex \
+    --local \
+    --mode custom \
+    --change "custom min-severity exemption fixture" \
+    --focus injection \
+    --depth 1 \
+    --yes \
+    --min-severity high \
+    >"$CUSTOM_RUN_OUTPUT" 2>&1
+custom_run_status=$?
+
+custom_run_id="$(sed -n 's/.*RepoLens run \([^ ]*\) complete.*/\1/p' "$CUSTOM_RUN_OUTPUT" | tail -1)"
+if [[ -n "$custom_run_id" ]]; then
+  CUSTOM_RUN_LOG_DIR="$SCRIPT_DIR/logs/$custom_run_id"
+fi
+
+PATH="$FAKE_BIN:$PATH" \
+  REPOLENS_AGENT_TIMEOUT=10 \
+  REPOLENS_AGENT_KILL_GRACE=1 \
+  REPOLENS_MIN_SEVERITY=HIGH \
+  bash "$SCRIPT_DIR/repolens.sh" \
+    --project "$PROJECT_DIR" \
+    --agent codex \
+    --local \
+    --dry-run \
+    --mode custom \
+    --change "custom min-severity exemption fixture" \
+    --focus injection \
+    --depth 1 \
+    --yes \
+    >"$CUSTOM_ENV_RUN_OUTPUT" 2>&1
+custom_env_run_status=$?
+
+custom_env_run_id="$(sed -n 's/.*RepoLens run \([^ ]*\) starting.*/\1/p' "$CUSTOM_ENV_RUN_OUTPUT" | tail -1)"
+if [[ -n "$custom_env_run_id" ]]; then
+  CUSTOM_ENV_RUN_LOG_DIR="$SCRIPT_DIR/logs/$custom_env_run_id"
+fi
+
 summary_file="$TMPDIR/missing-summary.json"
 if [[ -n "$RUN_LOG_DIR" ]]; then
   summary_file="$RUN_LOG_DIR/summary.json"
@@ -309,6 +367,29 @@ feature_first_finding="$feature_local_output_dir/security/injection/001-mock-fin
 feature_second_finding="$feature_local_output_dir/security/injection/002-mock-finding-injection-r1-2.md"
 feature_prompt_file="$(dirname "$feature_local_output_dir")/captured-prompts/security__injection.prompt.md"
 
+custom_summary_file="$TMPDIR/missing-custom-summary.json"
+if [[ -n "$CUSTOM_RUN_LOG_DIR" ]]; then
+  custom_summary_file="$CUSTOM_RUN_LOG_DIR/summary.json"
+fi
+
+custom_local_output_dir=""
+if [[ -f "$custom_summary_file" ]]; then
+  custom_local_output_dir="$(jq -r '.output_dir // empty' "$custom_summary_file" 2>/dev/null || true)"
+fi
+[[ -n "$custom_local_output_dir" ]] || custom_local_output_dir="$TMPDIR/missing-custom-output"
+
+custom_warning_text="--min-severity has no effect in custom mode (this mode does not use severity)"
+custom_warning_count="$(line_count_contains "$CUSTOM_RUN_OUTPUT" "$custom_warning_text")"
+custom_env_warning_count="$(line_count_contains "$CUSTOM_ENV_RUN_OUTPUT" "$custom_warning_text")"
+custom_warning_line="$(line_number_for "$CUSTOM_RUN_OUTPUT" "$custom_warning_text")"
+custom_lens_start_line="$(line_number_for "$CUSTOM_RUN_OUTPUT" "[security/injection] Starting lens")"
+custom_agent_calls="$(wc -l < "$CUSTOM_AGENT_LOG" | tr -d ' ')"
+custom_findings_filtered="$(jq -r '.totals.findings_filtered // "missing"' "$custom_summary_file" 2>/dev/null || true)"
+custom_issues_created="$(jq -r '.totals.issues_created // "missing"' "$custom_summary_file" 2>/dev/null || true)"
+
+custom_first_finding="$custom_local_output_dir/security/injection/001-mock-finding-injection-r1-1.md"
+custom_second_finding="$custom_local_output_dir/security/injection/002-mock-finding-injection-r1-2.md"
+
 assert_success "fake-agent discover run succeeds with min severity high" "$run_status"
 assert_eq "discover run id is discoverable" "set" "$([[ -n "$run_id" ]] && printf 'set' || printf 'missing')"
 assert_eq "fake discover agent is invoked exactly once" "1" "$agent_calls"
@@ -348,5 +429,24 @@ assert_eq "summary records zero min-severity filtered feature findings" "0" "$fe
 assert_success "env fallback feature dry-run succeeds" "$feature_env_run_status"
 assert_eq "env fallback feature logs the no-effect warning exactly once" "1" "$feature_env_warning_count"
 assert_file_not_contains "env fallback feature does not advertise an active min-severity filter" "$FEATURE_ENV_RUN_OUTPUT" "Min severity: high"
+
+assert_success "fake-agent custom run succeeds with min severity high" "$custom_run_status"
+assert_eq "custom run id is discoverable" "set" "$([[ -n "$custom_run_id" ]] && printf 'set' || printf 'missing')"
+assert_eq "fake custom agent is invoked exactly once" "1" "$custom_agent_calls"
+assert_eq "custom mode logs the min-severity no-effect warning exactly once" "1" "$custom_warning_count"
+assert_line_order "custom min-severity warning is emitted before lens execution" "$custom_warning_line" "$custom_lens_start_line"
+assert_file_not_contains "custom startup does not advertise an active min-severity filter" "$CUSTOM_RUN_OUTPUT" "Min severity: high"
+assert_file_not_contains "custom output does not log dropped findings" "$CUSTOM_RUN_OUTPUT" "Dropped finding"
+assert_file_not_contains "custom output does not report filtered stdout" "$CUSTOM_RUN_OUTPUT" "Findings filtered by --min-severity:"
+assert_file_exists "custom summary.json is written" "$custom_summary_file"
+assert_dir_exists "custom local output directory is recorded in summary" "$custom_local_output_dir"
+assert_file_exists "first low-severity custom fixture finding is preserved" "$custom_first_finding"
+assert_file_exists "second low-severity custom fixture finding is preserved" "$custom_second_finding"
+assert_file_contains "custom fixture finding is below the high threshold" "$custom_first_finding" "severity: low"
+assert_eq "summary preserves both emitted custom findings" "2" "$custom_issues_created"
+assert_eq "summary records zero min-severity filtered custom findings" "0" "$custom_findings_filtered"
+assert_success "env fallback custom dry-run succeeds" "$custom_env_run_status"
+assert_eq "env fallback custom logs the no-effect warning exactly once" "1" "$custom_env_warning_count"
+assert_file_not_contains "env fallback custom does not advertise an active min-severity filter" "$CUSTOM_ENV_RUN_OUTPUT" "Min severity: high"
 
 finish
