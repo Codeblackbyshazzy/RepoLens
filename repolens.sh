@@ -3277,6 +3277,10 @@ if [[ "$RUN_ROUNDS_RC" -eq 0 && "$MODE" == "bugreport" && "${ROUNDS:-1}" -gt 1 ]
         log_warn "Synthesizer: failed to produce a valid manifest"
         ;;
     esac
+    if [[ "$synth_rc" -ne 3 ]]; then
+      REPOLENS_FINAL_STATE="failed"
+      set_stop_reason "$SUMMARY_FILE" "synthesizer-failed"
+    fi
     RUN_ROUNDS_RC=1
   fi
 fi
