@@ -652,7 +652,10 @@
       "lenses": [
         "contrast-figure-ground",
         "alignment-symmetry",
-        "spacing-consistency"
+        "spacing-consistency",
+        "motion-consistency",
+        "convention-match",
+        "typographic-rhythm"
       ]
     }
   ]

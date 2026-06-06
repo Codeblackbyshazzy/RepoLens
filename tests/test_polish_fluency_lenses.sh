@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #295: first polish-mode fluency domain and lenses.
+# Tests for issues #295 and #296: polish-mode fluency domain and lenses.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,10 +70,10 @@ DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 LENSES_DIR="$SCRIPT_DIR/prompts/lenses"
 
-EXPECTED_LENSES="contrast-figure-ground alignment-symmetry spacing-consistency"
+EXPECTED_LENSES="contrast-figure-ground alignment-symmetry spacing-consistency motion-consistency convention-match typographic-rhythm"
 
 echo ""
-echo "=== Test Suite: polish fluency lenses (issue #295) ==="
+echo "=== Test Suite: polish fluency lenses (issues #295 and #296) ==="
 echo ""
 
 echo "Test 1: fluency domain is registered for polish mode"
@@ -81,7 +81,7 @@ fluency_mode="$(jq -r '.domains[] | select(.id == "fluency") | .mode' "$DOMAINS_
 assert_eq "fluency mode is polish" "polish" "$fluency_mode"
 
 echo ""
-echo "Test 2: fluency domain exposes exactly the first three lenses"
+echo "Test 2: fluency domain exposes exactly the expected polish lenses"
 fluency_lenses="$(jq -r '.domains[] | select(.id == "fluency") | .lenses | join(" ")' "$DOMAINS_FILE")"
 assert_eq "fluency lens list matches issue scope" "$EXPECTED_LENSES" "$fluency_lenses"
 
@@ -94,7 +94,7 @@ echo ""
 echo "Test 4: polish mode resolves only fluency lenses"
 polish_lenses="$(jq -r --arg mode "polish" \
   '.domains | sort_by(.order)[] | (if $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-assert_eq "polish lens count is 3" "3" "$(printf '%s\n' "$polish_lenses" | sed '/^$/d' | wc -l | tr -d ' ')"
+assert_eq "polish lens count is 6" "6" "$(printf '%s\n' "$polish_lenses" | sed '/^$/d' | wc -l | tr -d ' ')"
 for lens in $EXPECTED_LENSES; do
   assert_contains "polish resolves fluency/$lens" "fluency/$lens" "$polish_lenses"
 done
@@ -144,6 +144,24 @@ assert_contains "spacing lens names repetition" \
   "repetition" "$(cat "$LENSES_DIR/fluency/spacing-consistency.md")"
 assert_contains "spacing lens names consistency" \
   "consistency" "$(cat "$LENSES_DIR/fluency/spacing-consistency.md")"
+assert_contains "motion lens names shared easing" \
+  "shared easing" "$(cat "$LENSES_DIR/fluency/motion-consistency.md")"
+assert_contains "motion lens names duration tokens" \
+  "duration tokens" "$(cat "$LENSES_DIR/fluency/motion-consistency.md")"
+assert_contains "convention lens names prototypicality" \
+  "prototypicality" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
+assert_contains "convention lens flags unintentional deviation" \
+  "Unintentional deviation" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
+assert_contains "convention lens permits intentional voice-fit deviation" \
+  "intentional, voice-fit deviation" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
+assert_contains "typographic lens names type scale" \
+  "type scale" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
+assert_contains "typographic lens names line-height" \
+  "line-height" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
+assert_contains "typographic lens names measure" \
+  "measure" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
+assert_contains "typographic lens names vertical rhythm" \
+  "vertical rhythm" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
 
 echo ""
 echo "================================"
