@@ -62,6 +62,152 @@ Off-brand here:
 EOF
 }
 
+_polish_run_base() {
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    printf '%s\n' "$LOG_BASE"
+    return 0
+  fi
+
+  local run_id="${1:-}"
+  if [[ -z "$run_id" ]]; then
+    return 1
+  fi
+
+  printf '%s/logs/%s\n' "$(_polish_repo_root)" "$run_id"
+}
+
+_polish_collect_suggestions_json() {
+  local canonical_file="$1" fragment_dir="$2"
+  shift 2 || true
+  local -a inputs=()
+  local local_output_root fragment
+
+  if [[ -s "$canonical_file" ]]; then
+    inputs+=("$canonical_file")
+  fi
+
+  if [[ -d "$fragment_dir" ]]; then
+    while IFS= read -r fragment; do
+      [[ -n "$fragment" ]] && inputs+=("$fragment")
+    done < <(find "$fragment_dir" -type f -name '*.json' | LC_ALL=C sort)
+  fi
+
+  for local_output_root in "$@"; do
+    [[ -d "$local_output_root" ]] || continue
+    while IFS= read -r fragment; do
+      [[ -n "$fragment" ]] && inputs+=("$fragment")
+    done < <(find "$local_output_root" -mindepth 3 -maxdepth 3 -type f -name '*.json' | LC_ALL=C sort)
+  done
+
+  if (( ${#inputs[@]} == 0 )); then
+    printf '[]\n'
+    return 0
+  fi
+
+  mapfile -t inputs < <(printf '%s\n' "${inputs[@]}" | LC_ALL=C sort -u)
+
+  jq -s '
+    def as_array:
+      if type == "array" then .
+      elif type == "object" then [.]
+      else []
+      end;
+    map(as_array) | add
+  ' "${inputs[@]}"
+}
+
+# run_polish_ranking [run_id]
+#   Reads logs/<run-id>/polish/suggestions.json, per-lens JSON fragments under
+#   logs/<run-id>/polish/suggestions/, and local polish JSON outputs under
+#   round lens-output trees. Adds deterministic polish rank factors and writes
+#   logs/<run-id>/polish/ranked-suggestions.json.
+run_polish_ranking() {
+  local run_id="${1:-${RUN_ID:-}}" base_dir polish_dir suggestions_file fragments_dir ranked_file tmp_file
+  local -a local_output_roots=()
+  local local_output_root
+
+  if [[ -z "$run_id" ]]; then
+    _polish_log_warn "Polish ranking: missing RUN_ID"
+    return 1
+  fi
+
+  base_dir="$(_polish_run_base "$run_id")" || return 1
+  polish_dir="$base_dir/polish"
+  suggestions_file="$polish_dir/suggestions.json"
+  fragments_dir="$polish_dir/suggestions"
+  ranked_file="$polish_dir/ranked-suggestions.json"
+  tmp_file="$ranked_file.tmp.$$"
+
+  mkdir -p "$polish_dir" || return 1
+
+  if [[ -d "$base_dir/rounds" ]]; then
+    while IFS= read -r local_output_root; do
+      [[ -n "$local_output_root" ]] && local_output_roots+=("$local_output_root")
+    done < <(find "$base_dir/rounds" -type d -path '*/lens-outputs' | LC_ALL=C sort)
+  fi
+  if [[ -n "${OUTPUT_DIR:-}" && -d "${OUTPUT_DIR:-}" ]]; then
+    local_output_roots+=("$OUTPUT_DIR")
+  fi
+  if [[ -n "${CURRENT_ROUND_OUTPUT_DIR:-}" && -d "${CURRENT_ROUND_OUTPUT_DIR:-}" ]]; then
+    local_output_roots+=("$CURRENT_ROUND_OUTPUT_DIR")
+  fi
+
+  if ! _polish_collect_suggestions_json "$suggestions_file" "$fragments_dir" "${local_output_roots[@]}" \
+      | jq '
+          def norm_string:
+            tostring | ascii_downcase | gsub("_"; "-") | gsub("[[:space:]]+"; "-");
+          def soul_fit_value:
+            ((.voice_fit // "") | norm_string) as $fit
+            | if $fit == "strong" then 1
+              elif $fit == "medium" then 0.65
+              elif $fit == "weak" then 0.15
+              elif $fit == "off-brand" or $fit == "offbrand" then 0
+              else 0
+              end;
+          def effort_gap_value:
+            ((.location_expectedness // "") | norm_string) as $expectedness
+            | if $expectedness == "forgotten-corner" or $expectedness == "forgotten-corners" then 1.5
+              elif $expectedness == "no-benchmark" then 1.35
+              elif $expectedness == "low-expectation" then 1.2
+              elif $expectedness == "expected" then 1
+              else 1
+              end;
+          def stable_text($key): (.[$key] // "" | tostring | ascii_downcase);
+
+          if type == "array" then .
+          else []
+          end
+          | map(
+              . as $suggestion
+              | ($suggestion | soul_fit_value) as $soul_fit
+              | ($suggestion | effort_gap_value) as $effort_gap
+              | . + {
+                  fluency_baseline: 1,
+                  soul_fit: $soul_fit,
+                  effort_gap_multiplier: $effort_gap,
+                  polish_rank_x1000: (($soul_fit * $effort_gap * 1000) | floor)
+                }
+            )
+          | sort_by(
+              -(.polish_rank_x1000 // 0),
+              -(.soul_fit // 0),
+              -(.effort_gap_multiplier // 0),
+              stable_text("domain"),
+              stable_text("lens_id"),
+              stable_text("title"),
+              stable_text("source_path")
+            )
+        ' > "$tmp_file"; then
+    rm -f "$tmp_file"
+    _polish_log_warn "Polish ranking: failed to build ranked suggestions"
+    return 1
+  fi
+
+  mv "$tmp_file" "$ranked_file" || return 1
+  _polish_log_info "Polish ranking: written to $ranked_file"
+  return 0
+}
+
 # run_polish_voice_profile_prepass [run_id]
 #   Builds logs/<run-id>/polish/voice-profile.md once before polish lenses run.
 run_polish_voice_profile_prepass() {

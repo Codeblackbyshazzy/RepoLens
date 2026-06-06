@@ -1797,6 +1797,9 @@ fi
 TRIAGE_CONTEXT_PACK_FILE="$LOG_BASE/triage/context-pack.md"
 POLISH_VOICE_PROFILE_FILE="$LOG_BASE/polish/voice-profile.md"
 export POLISH_VOICE_PROFILE_FILE
+if [[ "$MODE" == "polish" ]]; then
+  mkdir -p "$LOG_BASE/polish/suggestions" || die "Unable to initialize polish suggestions directory"
+fi
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
@@ -2902,6 +2905,7 @@ run_lens() {
     vars+="|HYPOTHESES_TO_VERIFY=@${HYPOTHESES_TO_VERIFY_FILE}"
   fi
   if [[ "$MODE" == "polish" ]]; then
+    vars+="|POLISH_SUGGESTIONS_FILE=$(template_var_escape "$LOG_BASE/polish/suggestions/${domain}--${lens_id}.json")"
     if [[ -f "${POLISH_VOICE_PROFILE_FILE:-}" ]]; then
       vars+="|VOICE_PROFILE=@${POLISH_VOICE_PROFILE_FILE}"
     else
@@ -3346,6 +3350,16 @@ fi
 if [[ "$RUN_ROUNDS_RC" -eq 0 ]]; then
   run_rounds "$ROUNDS" LENS_LIST
   RUN_ROUNDS_RC=$?
+fi
+
+# --- Polish ranking (post-rounds, pre-verifier) ---
+if [[ "$RUN_ROUNDS_RC" -eq 0 && "$MODE" == "polish" ]]; then
+  log_info "Polish ranking: ordering surfaced suggestions"
+  if run_polish_ranking "$RUN_ID"; then
+    log_info "Polish ranking: ranked-suggestions.json promoted"
+  else
+    die "Polish ranking failed"
+  fi
 fi
 
 # --- Verifier (post-rounds, pre-synthesizer) ---

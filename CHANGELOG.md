@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Parallel rate-limit aborts now preserve operator-visible terminal state: lens-level provider quota aborts finish as `status.json.state: "rate-limit-pending"` with CLI exit `3`, while SIGHUP, SIGINT, or SIGTERM during a rate-limit retry sleep finish as `interrupted` with the corresponding stopped reason and exit code `129`, `130`, or `143` ([#276](https://github.com/TheMorpheus407/RepoLens/issues/276))
 - Greenfield planning now refreshes current backlog state before every planner iteration: forge runs read all currently open issues, `--local` runs read current draft markdown files, and planning stops instead of filing blind when forge backlog checks are unavailable ([#285](https://github.com/TheMorpheus407/RepoLens/issues/285))
 
+### Changed
+
+- Polish mode now collects structured JSON suggestions and writes `logs/<run-id>/polish/ranked-suggestions.json`, sorted by deterministic polish rank with `fluency_baseline`, `soul_fit`, `effort_gap_multiplier`, and `polish_rank_x1000` fields on each suggestion. Polish issue emission remains separate from this ranking step ([#301](https://github.com/TheMorpheus407/RepoLens/issues/301))
+
 ### Added
 
 - `--mode greenfield`: a spec-led backlog planning mode that requires `--spec`, runs the new Greenfield Planning domain, avoids repository code inspection, stays locked to `--rounds 1`, and creates one implementation-sized `[P0]`-`[P3]` issue per invocation until existing issues sufficiently cover the specification ([#283](https://github.com/TheMorpheus407/RepoLens/issues/283))

@@ -277,12 +277,14 @@ compose_prompt() {
   local forge_enhancement_label_create="${prompt_vars[FORGE_ENHANCEMENT_LABEL_CREATE]:-Use the active forge CLI to create label enhancement with color a2eeef}"
   local forge_issue_list_open="${prompt_vars[FORGE_ISSUE_LIST_OPEN]:-Use the active forge CLI to list open issues}"
   local forge_issue_list_closed="${prompt_vars[FORGE_ISSUE_LIST_CLOSED]:-Use the active forge CLI to list closed issues}"
+  local polish_suggestions_file="${prompt_vars[POLISH_SUGGESTIONS_FILE]:-logs/${prompt_vars[RUN_ID]:-current-run}/polish/suggestions/${prompt_vars[DOMAIN]:-domain}--${prompt_vars[LENS_ID]:-lens}.json}"
 
   prompt="${prompt//\{\{FORGE_ISSUE_CREATE\}\}/$forge_issue_create}"
   prompt="${prompt//\{\{FORGE_LABEL_CREATE\}\}/$forge_label_create}"
   prompt="${prompt//\{\{FORGE_ENHANCEMENT_LABEL_CREATE\}\}/$forge_enhancement_label_create}"
   prompt="${prompt//\{\{FORGE_ISSUE_LIST_OPEN\}\}/$forge_issue_list_open}"
   prompt="${prompt//\{\{FORGE_ISSUE_LIST_CLOSED\}\}/$forge_issue_list_closed}"
+  prompt="${prompt//\{\{POLISH_SUGGESTIONS_FILE\}\}/$polish_suggestions_file}"
 
   # Remote deploy rendering is built here instead of transported through
   # vars_string, because the prompt section intentionally contains shell pipes.
@@ -475,6 +477,44 @@ Before writing a new backlog item, check if a file with a similar title already 
 - Do **NOT** use \`gh issue create\` — write markdown files instead
 - Do **NOT** use \`gh label create\` — no GitHub labels needed
 - Do **NOT** use \`gh issue list\` — check existing files in the output directory instead
+- Create the output subdirectory with \`mkdir -p\` before writing files"
+    elif [[ "$mode" == "polish" ]]; then
+      local_mode_section="## LOCAL MODE OVERRIDE
+
+**IMPORTANT: This overrides the forge issue creation rules.**
+
+You are running in LOCAL MODE. Do **NOT** use \`gh issue create\` or \`gh label create\` commands. Instead, write polish suggestions as structured JSON files.
+
+### Output Directory
+Write all polish suggestion files to: \`${local_output_dir}\`
+
+### File Naming Convention
+Name files as: \`NNN-<slug>.json\` where NNN is a zero-padded sequence number (001, 002, ...) and \`<slug>\` is a lowercase, hyphenated slug derived from the polish suggestion title.
+
+### File Format
+Each JSON file must contain one polish suggestion object:
+\`\`\`json
+{
+  \"title\": \"[POLISH] Suggestion title\",
+  \"domain\": \"<domain>\",
+  \"lens_id\": \"<lens-id>\",
+  \"source_path\": \"<path-or-surface>\",
+  \"polish_family\": \"fluency|effort-signal|hedonic\",
+  \"voice_fit\": \"strong|medium|weak|off-brand\",
+  \"location_expectedness\": \"expected|low-expectation|no-benchmark|forgotten-corner\",
+  \"labels\": [\"<lens-label>\", \"enhancement\"],
+  \"body\": \"Markdown body using the required polish sections.\"
+}
+\`\`\`
+
+### Deduplication
+Before writing a new polish suggestion, check if a file with a similar title already exists in the output directory. If so, skip the duplicate.
+
+### Key Rules
+- Do **NOT** use \`gh issue create\` — write JSON files instead
+- Do **NOT** use \`gh label create\` — no GitHub labels needed
+- Do **NOT** use \`gh issue list\` — check existing files in the output directory instead
+- Do **NOT** include computed ordering fields — RepoLens adds them after lens execution
 - Create the output subdirectory with \`mkdir -p\` before writing files"
     else
       local_mode_section="## LOCAL MODE OVERRIDE

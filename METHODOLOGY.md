@@ -8,7 +8,7 @@
 
 RepoLens implements **Lens-Based Auditing (LBA)**, a methodology for automated code analysis that decomposes the audit problem into 336 narrow-focus specialist agents ("lenses") across 33 domains. Rather than asking a single generalist agent to review an entire codebase for every possible concern, LBA assigns each concern to a dedicated expert lens — one that examines the code through a single, specific perspective.
 
-The tool currently supports 10 modes of operation (audit, feature, bugfix, bugreport, discover, deploy, opensource, content, greenfield, custom), multiple agent backends, parallel execution, and automated GitHub issue creation. This document describes the methodology behind the tool: what Lensing is, why it works, and how its components fit together.
+The tool currently supports 10 modes of operation (audit, feature, bugfix, bugreport, discover, deploy, opensource, content, greenfield, custom), multiple agent backends, parallel execution, automated issue creation, and a separate ranked polish artifact workflow. This document describes the methodology behind the tool: what Lensing is, why it works, and how its components fit together.
 
 ---
 
@@ -22,7 +22,7 @@ At execution time, a template engine merges a mode-specific base template with t
 2. Deep domain-specific expertise (the lens body)
 3. Runtime context (project path, repository owner, labels)
 
-**Lens-Based Auditing (LBA)** is the methodology built on Lensing: run many lenses independently against the same codebase, each creating GitHub issues for real findings. Its key properties are:
+**Lens-Based Auditing (LBA)** is the methodology built on Lensing: run many lenses independently against the same codebase, each producing mode-specific output such as issues, local files, or ranked artifacts. Its key properties are:
 
 - **Single responsibility** — each lens examines one aspect only
 - **Deep specialization** — lens prompts encode detailed expert knowledge
@@ -134,9 +134,11 @@ The `--depth default` and `--rounds default` columns reflect the CLI defaults as
 | **content** | Content quality and creation | 17 (content quality only) | 1 | 1 (locked) |
 | **greenfield** | Spec-to-backlog planning for a new or skeletal project. Requires `--spec <file>`, checks the current open issue or local draft backlog, and creates non-duplicate implementation-sized `[P0]`-`[P3]` issues without inspecting repository code | 1 (greenfield planning only) | 1 | 1 (locked) |
 
-Each mode uses its own severity or priority schema (e.g., audit uses CRITICAL/HIGH/MEDIUM/LOW, discover uses SMALL/MEDIUM/LARGE/XL, custom uses BREAKING/REQUIRED/RECOMMENDED/OPTIONAL, greenfield uses P0/P1/P2/P3) and its own GitHub label format.
+Each mode uses its own output schema (e.g., audit uses CRITICAL/HIGH/MEDIUM/LOW, discover uses SMALL/MEDIUM/LARGE/XL, custom uses BREAKING/REQUIRED/RECOMMENDED/OPTIONAL, and greenfield uses P0/P1/P2/P3) and its own label format when labels apply.
 
 Greenfield mode is intentionally spec-led rather than code-led. Its single planner lens treats the provided `--spec` file as product-owner intent. Before each planner iteration, RepoLens supplies the current backlog: all currently open forge issues in normal mode, or existing local draft markdown files in `--local` mode. The planner skips covered spec slices, creates only the next missing implementation-sized backlog item, and emits `DONE` when no non-duplicate work remains. The target project still provides the repository and issue tracker context, but greenfield planning does not derive work from current implementation details.
+
+The separate polish workflow is intentionally suggestion-led rather than defect-led. It first builds a project voice profile, then runs the fluency, effort-signal, and hedonic polish lenses once. Lenses emit structured tags such as `voice_fit`, `location_expectedness`, and `polish_family`; RepoLens combines those tags deterministically into `logs/<run-id>/polish/ranked-suggestions.json`. The final rank orders agent-surfaced polish suggestions. It does not score the repository, and the agents do not compute the rank themselves.
 
 Deploy mode is unique in that it does not require a git repository. It can inspect a live server, a direct Android APK, a discovered APK, or a shallow Android source tree. Live-server deploy uses system commands (systemctl, ss, df, journalctl) in a strictly read-only fashion, with explicit legal authorization gates.
 
@@ -185,7 +187,7 @@ triage → round 1 (all selected lenses) → meta-orchestrator → round 2 (info
 
 - Every non-`bugreport` mode is locked to `--rounds 1`.
 - `deploy` runs against a live server, read-only by design, and remains single-pass.
-- `opensource`, `content`, and `discover` are single-pass readiness, content, and product-strategy modes.
+- `opensource`, `content`, `discover`, and `polish` are single-pass readiness, content, product-strategy, and polishing modes.
 - `greenfield` creates one next implementation issue per invocation and remains locked to `--rounds 1`.
 
 A cross-mode safety ceiling (`REPOLENS_MAX_ROUNDS`, default 5) aborts excessive `--rounds` values irrespective of mode. The `--i-know-this-is-expensive` flag bypasses the soft abort gate at `rounds >= 4` but does NOT bypass this hard ceiling.
