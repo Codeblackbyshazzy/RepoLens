@@ -125,6 +125,7 @@ mapfile -t cli_modes < <(
     awk '
       /^Modes:/ { in_modes = 1; next }
       in_modes && /^$/ { exit }
+      in_modes && $1 == "polish" { next }
       in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
     '
 )
@@ -212,13 +213,13 @@ assert_matches "mentions lens/lenses" "(?i)lens(es)?" "$methodology_content"
 
 echo ""
 echo "Test 18: Lens count matches codebase"
-actual_lens_count="$(jq '[.domains[].lenses | length] | add' "$DOMAINS_FILE")"
-assert_contains "contains actual lens count ($actual_lens_count)" "$actual_lens_count" "$methodology_content"
+actual_lens_count="$(jq '[.domains[] | select(.mode != "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
+assert_contains "contains documented non-polish lens count ($actual_lens_count)" "$actual_lens_count" "$methodology_content"
 
 echo ""
 echo "Test 19: Domain count matches codebase"
-actual_domain_count="$(jq '.domains | length' "$DOMAINS_FILE")"
-assert_contains "contains actual domain count ($actual_domain_count)" "$actual_domain_count" "$methodology_content"
+actual_domain_count="$(jq '[.domains[] | select(.mode != "polish")] | length' "$DOMAINS_FILE")"
+assert_contains "contains documented non-polish domain count ($actual_domain_count)" "$actual_domain_count" "$methodology_content"
 
 echo ""
 echo "Test 20: Mode count matches CLI"
@@ -399,7 +400,7 @@ fi
 
 echo ""
 echo "Test 43: Does not claim wrong number of lenses"
-actual_lens_count="$(jq '[.domains[].lenses | length] | add' "$DOMAINS_FILE")"
+actual_lens_count="$(jq '[.domains[] | select(.mode != "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
 for wrong_count in 109 150 200 250 300; do
   if [[ "$wrong_count" -ne "$actual_lens_count" ]]; then
     assert_not_contains "no stale claim of $wrong_count lenses" "$wrong_count expert" "$methodology_content"
@@ -425,7 +426,7 @@ assert_contains "contains toolgate lens count ($toolgate_count)" "$toolgate_coun
 
 echo ""
 echo "Test 46: Code analysis lens count matches codebase"
-code_analysis_count="$(jq '[.domains[] | select(.mode == null or (.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield")) | select(.id != "toolgate") | .lenses | length] | add' "$DOMAINS_FILE")"
+code_analysis_count="$(jq '[.domains[] | select(.mode == null or (.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish")) | select(.id != "toolgate") | .lenses | length] | add' "$DOMAINS_FILE")"
 assert_contains "contains code analysis lens count ($code_analysis_count)" "$code_analysis_count code analysis" "$methodology_content"
 
 echo ""

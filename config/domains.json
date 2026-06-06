@@ -643,6 +643,17 @@
       "lenses": [
         "backlog-planning"
       ]
+    },
+    {
+      "id": "fluency",
+      "name": "Fluency",
+      "mode": "polish",
+      "order": 34,
+      "lenses": [
+        "contrast-figure-ground",
+        "alignment-symmetry",
+        "spacing-consistency"
+      ]
     }
   ]
 }

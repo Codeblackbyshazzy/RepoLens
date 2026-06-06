@@ -85,8 +85,9 @@ deployment_count="$(jq '[.domains[] | select(.mode == "deploy") | .lenses | leng
 opensource_count="$(jq '[.domains[] | select(.mode == "opensource") | .lenses | length] | add' "$DOMAINS_FILE")"
 content_count="$(jq '[.domains[] | select(.mode == "content") | .lenses | length] | add' "$DOMAINS_FILE")"
 greenfield_count="$(jq '[.domains[] | select(.mode == "greenfield") | .lenses | length] | add' "$DOMAINS_FILE")"
+polish_count="$(jq '[.domains[] | select(.mode == "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
 breakdown_total="$((code_analysis_count + toolgate_count + logs_count + discovery_count + deployment_count + opensource_count + content_count))"
-documented_total="$((total_lenses - greenfield_count))"
+documented_total="$((total_lenses - greenfield_count - polish_count))"
 
 echo ""
 echo "Test 1: CLAUDE.md headline count matches domains.json"

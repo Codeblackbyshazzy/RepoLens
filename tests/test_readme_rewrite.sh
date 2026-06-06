@@ -84,6 +84,7 @@ mapfile -t cli_modes < <(
     awk '
       /^Modes:/ { in_modes = 1; next }
       in_modes && /^$/ { exit }
+      in_modes && $1 == "polish" { next }
       in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
     '
 )
@@ -109,8 +110,8 @@ assert_not_contains "no MIT in license section" "MIT" "$last_line_area"
 
 echo ""
 echo "Test 3: Lens count matches domains.json"
-actual_count="$(jq '[.domains[].lenses | length] | add' "$DOMAINS_FILE")"
-assert_contains "README has actual lens count ($actual_count)" "$actual_count" "$readme_content"
+actual_count="$(jq '[.domains[] | select(.mode != "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
+assert_contains "README has documented non-polish lens count ($actual_count)" "$actual_count" "$readme_content"
 
 echo ""
 echo "Test 4: Old lens count '109' is gone"
@@ -122,8 +123,8 @@ assert_not_contains "no stale '109' count" "109 expert" "$readme_content"
 
 echo ""
 echo "Test 5: Domain count matches domains.json"
-actual_domains="$(jq '.domains | length' "$DOMAINS_FILE")"
-assert_contains "README has actual domain count ($actual_domains)" "$actual_domains" "$readme_content"
+actual_domains="$(jq '[.domains[] | select(.mode != "polish")] | length' "$DOMAINS_FILE")"
+assert_contains "README has documented non-polish domain count ($actual_domains)" "$actual_domains" "$readme_content"
 
 # =====================================================================
 # 4. All CLI modes documented

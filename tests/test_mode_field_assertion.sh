@@ -125,7 +125,8 @@ if grep -qE '\.mode\s*!=\s*"discover"' <<< "$test14_area" && \
    grep -qE '\.mode\s*!=\s*"deploy"' <<< "$test14_area" && \
    grep -qE '\.mode\s*!=\s*"opensource"' <<< "$test14_area" && \
    grep -qE '\.mode\s*!=\s*"content"' <<< "$test14_area" && \
-   grep -qE '\.mode\s*!=\s*"greenfield"' <<< "$test14_area"; then
+   grep -qE '\.mode\s*!=\s*"greenfield"' <<< "$test14_area" && \
+   grep -qE '\.mode\s*!=\s*"polish"' <<< "$test14_area"; then
   PASS=$((PASS + 1))
   echo "  PASS: test 14 filters by all known mode values"
 else
@@ -152,13 +153,13 @@ else
 fi
 
 # =====================================================================
-# Contract 4: domains.json has exactly 6 mode-bearing domains
+# Contract 4: domains.json has exactly 7 mode-bearing domains
 # =====================================================================
 
 echo ""
-echo "Test 10: domains.json has exactly 6 mode-bearing domains"
+echo "Test 10: domains.json has exactly 7 mode-bearing domains"
 mode_count="$(jq '[.domains[] | select(.mode != null)] | length' "$DOMAINS_FILE")"
-assert_eq "6 domains have mode fields" "6" "$mode_count"
+assert_eq "7 domains have mode fields" "7" "$mode_count"
 
 echo ""
 echo "Test 11: discovery domain has mode 'discover'"
@@ -185,15 +186,20 @@ echo "Test 14b: greenfield domain has mode 'greenfield'"
 mode_val="$(jq -r '.domains[] | select(.id == "greenfield") | .mode' "$DOMAINS_FILE")"
 assert_eq "greenfield mode is greenfield" "greenfield" "$mode_val"
 
+echo ""
+echo "Test 14c: fluency domain has mode 'polish'"
+mode_val="$(jq -r '.domains[] | select(.id == "fluency") | .mode' "$DOMAINS_FILE")"
+assert_eq "fluency mode is polish" "polish" "$mode_val"
+
 # =====================================================================
 # Contract 5: No unexpected mode fields on standard domains
 # =====================================================================
 
 echo ""
 echo "Test 15: No domain has an unexpected mode value"
-# The only valid mode values are: discover, deploy, opensource, content, greenfield
+# The only valid mode values are: discover, deploy, opensource, content, greenfield, polish
 # Any domain with a mode field not in this set is a bug
-unexpected_modes="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield") | .id + "=" + .mode' "$DOMAINS_FILE")"
+unexpected_modes="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id + "=" + .mode' "$DOMAINS_FILE")"
 assert_eq "no unexpected mode values" "" "$unexpected_modes"
 
 echo ""
@@ -253,13 +259,14 @@ cat > "$TMPDIR_SYNTH/domains.json" <<'SYNTH'
     { "id": "open-source-readiness", "mode": "opensource", "lenses": [] },
     { "id": "content-quality", "mode": "content", "lenses": [] },
     { "id": "greenfield", "mode": "greenfield", "lenses": [] },
+    { "id": "fluency", "mode": "polish", "lenses": [] },
     { "id": "security", "lenses": [] },
     { "id": "bogus-domain", "mode": "bogus", "lenses": [] }
   ]
 }
 SYNTH
 # Run the exact jq filter from the fixed test 14
-caught="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield") | .id' "$TMPDIR_SYNTH/domains.json")"
+caught="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id' "$TMPDIR_SYNTH/domains.json")"
 assert_eq "filter catches bogus mode domain" "bogus-domain" "$caught"
 
 echo ""
@@ -272,12 +279,13 @@ cat > "$TMPDIR_SYNTH/domains_clean.json" <<'SYNTH'
     { "id": "open-source-readiness", "mode": "opensource", "lenses": [] },
     { "id": "content-quality", "mode": "content", "lenses": [] },
     { "id": "greenfield", "mode": "greenfield", "lenses": [] },
+    { "id": "fluency", "mode": "polish", "lenses": [] },
     { "id": "security", "lenses": [] },
     { "id": "architecture", "lenses": [] }
   ]
 }
 SYNTH
-clean="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield") | .id' "$TMPDIR_SYNTH/domains_clean.json")"
+clean="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id' "$TMPDIR_SYNTH/domains_clean.json")"
 assert_eq "filter returns empty for clean config" "" "$clean"
 
 echo ""
@@ -289,11 +297,12 @@ cat > "$TMPDIR_SYNTH/domains_multi.json" <<'SYNTH'
     { "id": "bad-one", "mode": "mystery", "lenses": [] },
     { "id": "bad-two", "mode": "unknown", "lenses": [] },
     { "id": "greenfield", "mode": "greenfield", "lenses": [] },
+    { "id": "fluency", "mode": "polish", "lenses": [] },
     { "id": "security", "lenses": [] }
   ]
 }
 SYNTH
-multi="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield") | .id' "$TMPDIR_SYNTH/domains_multi.json")"
+multi="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id' "$TMPDIR_SYNTH/domains_multi.json")"
 expected_multi=$'bad-one\nbad-two'
 assert_eq "filter catches multiple unexpected domains" "$expected_multi" "$multi"
 
@@ -308,7 +317,7 @@ cat > "$TMPDIR_SYNTH/domains_nomode.json" <<'SYNTH'
   ]
 }
 SYNTH
-nomode="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield") | .id' "$TMPDIR_SYNTH/domains_nomode.json")"
+nomode="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id' "$TMPDIR_SYNTH/domains_nomode.json")"
 assert_eq "filter returns empty when no domain has mode" "" "$nomode"
 
 # =====================================================================

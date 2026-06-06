@@ -61,6 +61,7 @@ extract_cli_modes() {
     awk '
       /^Modes:/ { in_modes = 1; next }
       in_modes && /^$/ { exit }
+      in_modes && $1 == "polish" { next }
       in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
     '
 }
