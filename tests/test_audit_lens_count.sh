@@ -280,6 +280,11 @@ echo "Test 20: Audit query excludes fluency domain lenses"
 fluency_lenses="$(echo "$audit_lenses" | grep "^fluency/" || true)"
 assert_eq "no fluency lenses in audit mode" "" "$fluency_lenses"
 
+echo ""
+echo "Test 21: Audit query excludes hedonic domain lenses"
+hedonic_lenses="$(echo "$audit_lenses" | grep "^hedonic/" || true)"
+assert_eq "no hedonic lenses in audit mode" "" "$hedonic_lenses"
+
 # =====================================================================
 # Summary
 # =====================================================================

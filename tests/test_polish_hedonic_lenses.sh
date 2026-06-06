@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issues #295 and #296: polish-mode fluency domain and lenses.
+# Tests for issue #299: polish-mode hedonic domain and lenses.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,46 +70,50 @@ DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 LENSES_DIR="$SCRIPT_DIR/prompts/lenses"
 
-EXPECTED_LENSES="contrast-figure-ground alignment-symmetry spacing-consistency motion-consistency convention-match typographic-rhythm"
+EXPECTED_LENSES="voice-and-microcopy identity-and-ownership"
 
 echo ""
-echo "=== Test Suite: polish fluency lenses (issues #295 and #296) ==="
+echo "=== Test Suite: polish hedonic lenses (issue #299) ==="
 echo ""
 
-echo "Test 1: fluency domain is registered for polish mode"
-fluency_mode="$(jq -r '.domains[] | select(.id == "fluency") | .mode' "$DOMAINS_FILE")"
-assert_eq "fluency mode is polish" "polish" "$fluency_mode"
+echo "Test 1: hedonic domain is registered for polish mode"
+mode="$(jq -r '.domains[] | select(.id == "hedonic") | .mode' "$DOMAINS_FILE")"
+assert_eq "hedonic mode is polish" "polish" "$mode"
+order="$(jq -r '.domains[] | select(.id == "hedonic") | .order' "$DOMAINS_FILE")"
+assert_eq "hedonic follows effort-signal" "36" "$order"
+description="$(jq -r '.domains[] | select(.id == "hedonic") | .description' "$DOMAINS_FILE")"
+assert_contains "hedonic description marks experimental status" "Experimental" "$description"
 
 echo ""
-echo "Test 2: fluency domain exposes exactly the expected polish lenses"
-fluency_lenses="$(jq -r '.domains[] | select(.id == "fluency") | .lenses | join(" ")' "$DOMAINS_FILE")"
-assert_eq "fluency lens list matches issue scope" "$EXPECTED_LENSES" "$fluency_lenses"
+echo "Test 2: hedonic exposes exactly the expected polish lenses"
+lenses="$(jq -r '.domains[] | select(.id == "hedonic") | .lenses | join(" ")' "$DOMAINS_FILE")"
+assert_eq "hedonic lens list matches issue scope" "$EXPECTED_LENSES" "$lenses"
 
 echo ""
-echo "Test 3: fluency label color is deterministic"
-color="$(jq -r '.fluency' "$COLORS_FILE")"
-assert_eq "fluency label color exists" "14b8a6" "$color"
+echo "Test 3: hedonic label color is deterministic"
+color="$(jq -r '.hedonic' "$COLORS_FILE")"
+assert_eq "hedonic label color exists" "a855f7" "$color"
 
 echo ""
-echo "Test 4: polish mode resolves fluency lenses"
+echo "Test 4: polish mode resolves hedonic lenses"
 polish_lenses="$(jq -r --arg mode "polish" \
   '.domains | sort_by(.order)[] | (if $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
 assert_eq "polish lens count is 14" "14" "$(printf '%s\n' "$polish_lenses" | sed '/^$/d' | wc -l | tr -d ' ')"
 for lens in $EXPECTED_LENSES; do
-  assert_contains "polish resolves fluency/$lens" "fluency/$lens" "$polish_lenses"
+  assert_contains "polish resolves hedonic/$lens" "hedonic/$lens" "$polish_lenses"
 done
 
 echo ""
-echo "Test 5: default audit selection excludes fluency"
+echo "Test 5: default audit selection excludes hedonic"
 audit_lenses="$(jq -r --arg mode "audit" \
   '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") elif $mode == "greenfield" then select(.mode == "greenfield") elif $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-fluency_audit_lenses="$(printf '%s\n' "$audit_lenses" | grep '^fluency/' || true)"
-assert_eq "no fluency lenses in default audit mode" "" "$fluency_audit_lenses"
+hedonic_audit_lenses="$(printf '%s\n' "$audit_lenses" | grep '^hedonic/' || true)"
+assert_eq "no hedonic lenses in default audit mode" "" "$hedonic_audit_lenses"
 
 echo ""
-echo "Test 6: all fluency lens files exist with required frontmatter and focus body"
+echo "Test 6: all hedonic lens files exist with required frontmatter and focus body"
 for lens in $EXPECTED_LENSES; do
-  lens_file="$LENSES_DIR/fluency/$lens.md"
+  lens_file="$LENSES_DIR/hedonic/$lens.md"
   if [[ ! -f "$lens_file" ]]; then
     TOTAL=$((TOTAL + 1))
     fail_with "$lens file exists" "Missing $lens_file"
@@ -119,49 +123,33 @@ for lens in $EXPECTED_LENSES; do
   lens_content="$(cat "$lens_file")"
   body="$(read_body "$lens_file")"
   assert_eq "$lens id frontmatter" "$lens" "$(read_frontmatter "$lens_file" "id")"
-  assert_eq "$lens domain frontmatter" "fluency" "$(read_frontmatter "$lens_file" "domain")"
+  assert_eq "$lens domain frontmatter" "hedonic" "$(read_frontmatter "$lens_file" "domain")"
   assert_contains "$lens name frontmatter" "name:" "$lens_content"
   assert_contains "$lens role frontmatter" "role:" "$lens_content"
   assert_contains "$lens expert focus" "## Your Expert Focus" "$body"
-  assert_contains "$lens cites processing fluency" "processing fluency" "$body"
+  assert_contains "$lens uses polish framing" "polish mode" "$body"
+  assert_contains "$lens states weak evidence" "weak evidence" "$body"
   assert_contains "$lens references project voice profile" "project voice profile" "$body"
   assert_contains "$lens permits No change needed" "No change needed" "$body"
-  assert_contains "$lens ties fluency to usability" "usable" "$body"
-  assert_contains "$lens ties fluency to beauty" "beautiful" "$body"
-  assert_contains "$lens ties fluency to trust" "trustworthy" "$body"
   assert_not_contains_regex "$lens avoids scoring language" 'scor(e|ing)|grade|rating' "$body"
 done
 
 echo ""
-echo "Test 7: each fluency lens names its evidence-backed lever"
-assert_contains "contrast lens names figure-ground contrast" \
-  "figure-ground contrast" "$(cat "$LENSES_DIR/fluency/contrast-figure-ground.md")"
-assert_contains "alignment lens names symmetry" \
-  "symmetry" "$(cat "$LENSES_DIR/fluency/alignment-symmetry.md")"
-assert_contains "alignment lens names figural goodness" \
-  "figural goodness" "$(cat "$LENSES_DIR/fluency/alignment-symmetry.md")"
-assert_contains "spacing lens names repetition" \
-  "repetition" "$(cat "$LENSES_DIR/fluency/spacing-consistency.md")"
-assert_contains "spacing lens names consistency" \
-  "consistency" "$(cat "$LENSES_DIR/fluency/spacing-consistency.md")"
-assert_contains "motion lens names shared easing" \
-  "shared easing" "$(cat "$LENSES_DIR/fluency/motion-consistency.md")"
-assert_contains "motion lens names duration tokens" \
-  "duration tokens" "$(cat "$LENSES_DIR/fluency/motion-consistency.md")"
-assert_contains "convention lens names prototypicality" \
-  "prototypicality" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
-assert_contains "convention lens flags unintentional deviation" \
-  "Unintentional deviation" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
-assert_contains "convention lens permits intentional voice-fit deviation" \
-  "intentional, voice-fit deviation" "$(cat "$LENSES_DIR/fluency/convention-match.md")"
-assert_contains "typographic lens names type scale" \
-  "type scale" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
-assert_contains "typographic lens names line-height" \
-  "line-height" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
-assert_contains "typographic lens names measure" \
-  "measure" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
-assert_contains "typographic lens names vertical rhythm" \
-  "vertical rhythm" "$(cat "$LENSES_DIR/fluency/typographic-rhythm.md")"
+echo "Test 7: voice-and-microcopy names required copy surfaces"
+voice_content="$(cat "$LENSES_DIR/hedonic/voice-and-microcopy.md")"
+assert_contains "voice lens names empty states" "empty states" "$voice_content"
+assert_contains "voice lens names errors" "errors" "$voice_content"
+assert_contains "voice lens names buttons" "buttons" "$voice_content"
+assert_contains "voice lens names confirmations" "confirmations" "$voice_content"
+assert_contains "voice lens requires local copy evidence" "local copy evidence" "$voice_content"
+
+echo ""
+echo "Test 8: identity-and-ownership names required caveats"
+identity_content="$(cat "$LENSES_DIR/hedonic/identity-and-ownership.md")"
+assert_contains "identity lens names HQ-I" "HQ-I" "$identity_content"
+assert_contains "identity lens names reflective level" "reflective level" "$identity_content"
+assert_contains "identity lens names IKEA effect" "IKEA effect" "$identity_content"
+assert_contains "identity lens rejects customization ownership claim" "do not add customization to create ownership" "$identity_content"
 
 echo ""
 echo "================================"
