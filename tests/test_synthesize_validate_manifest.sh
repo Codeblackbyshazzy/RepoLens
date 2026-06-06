@@ -619,8 +619,8 @@ compose_calls=$(wc -l < "$COMPOSE_LOG" | tr -d ' ')
 assert_eq "run_agent not called when rounds directory is missing" "0" "$agent_calls"
 assert_eq "compose_prompt not called when rounds directory is missing" "0" "$compose_calls"
 
-# Min-severity filtering happens before schema validation, so valid
-# below-threshold entries are removed and invalid severities warn and drop.
+# Pre-validation min-severity filtering removes below-threshold entries before
+# validate_manifest and turns invalid severities into warning-and-drop skips.
 : > "$COMPOSE_LOG"
 : > "$AGENT_LOG"
 stub_compose_prompt
@@ -667,7 +667,7 @@ run_synthesizer "run-min-filter" 2>"$TMPDIR/run-min-filter.err"
 status=$?
 unset REPOLENS_MIN_SEVERITY
 assert_success "run_synthesizer succeeds after min-severity filtering" "$status"
-assert_eq "pre-validation filter keeps only high entry" "high::kept" "$(jq -r '.[].cluster_id' "$RUN_LOG/final/manifest.json")"
+assert_eq "pre-validation min-severity filter keeps only high entry" "high::kept" "$(jq -r '.[].cluster_id' "$RUN_LOG/final/manifest.json")"
 
 : > "$COMPOSE_LOG"
 : > "$AGENT_LOG"
