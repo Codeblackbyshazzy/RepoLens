@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for issue #299: polish-mode hedonic domain and lenses.
+# Tests for issues #299 and #300: polish-mode hedonic domain and lenses.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,10 +70,10 @@ DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 LENSES_DIR="$SCRIPT_DIR/prompts/lenses"
 
-EXPECTED_LENSES="voice-and-microcopy identity-and-ownership"
+EXPECTED_LENSES="voice-and-microcopy identity-and-ownership stimulation-moments fitting-easter-eggs"
 
 echo ""
-echo "=== Test Suite: polish hedonic lenses (issue #299) ==="
+echo "=== Test Suite: polish hedonic lenses (issues #299 and #300) ==="
 echo ""
 
 echo "Test 1: hedonic domain is registered for polish mode"
@@ -98,7 +98,7 @@ echo ""
 echo "Test 4: polish mode resolves hedonic lenses"
 polish_lenses="$(jq -r --arg mode "polish" \
   '.domains | sort_by(.order)[] | (if $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | $d + "/" + .' "$DOMAINS_FILE")"
-assert_eq "polish lens count is 14" "14" "$(printf '%s\n' "$polish_lenses" | sed '/^$/d' | wc -l | tr -d ' ')"
+assert_eq "polish lens count is 16" "16" "$(printf '%s\n' "$polish_lenses" | sed '/^$/d' | wc -l | tr -d ' ')"
 for lens in $EXPECTED_LENSES; do
   assert_contains "polish resolves hedonic/$lens" "hedonic/$lens" "$polish_lenses"
 done
@@ -150,6 +150,25 @@ assert_contains "identity lens names HQ-I" "HQ-I" "$identity_content"
 assert_contains "identity lens names reflective level" "reflective level" "$identity_content"
 assert_contains "identity lens names IKEA effect" "IKEA effect" "$identity_content"
 assert_contains "identity lens rejects customization ownership claim" "do not add customization to create ownership" "$identity_content"
+
+echo ""
+echo "Test 9: stimulation-moments names required caveats"
+stimulation_content="$(cat "$LENSES_DIR/hedonic/stimulation-moments.md")"
+assert_contains "stimulation lens names HQ-S" "HQ-S" "$stimulation_content"
+assert_contains "stimulation lens names stimulation" "stimulation" "$stimulation_content"
+assert_contains "stimulation lens names exploration" "exploration" "$stimulation_content"
+assert_contains "stimulation lens says exploratory" "exploratory" "$stimulation_content"
+assert_contains "stimulation lens rejects generic surprise" "generic surprise" "$stimulation_content"
+
+echo ""
+echo "Test 10: fitting-easter-eggs names required restraint"
+easter_content="$(cat "$LENSES_DIR/hedonic/fitting-easter-eggs.md")"
+assert_contains "easter lens states default answer" "none — it wouldn't fit" "$easter_content"
+assert_contains "easter lens says restraint is the feature" "restraint is the feature" "$easter_content"
+assert_contains "easter lens requires strong voice fit" "strong voice-profile justification" "$easter_content"
+assert_contains "easter lens rejects Konami-code" "Konami-code" "$easter_content"
+assert_contains "easter lens rejects confetti" "confetti" "$easter_content"
+assert_contains "easter lens rejects special affect claim" "no verified evidence that easter eggs or surprise produce special affect" "$easter_content"
 
 echo ""
 echo "================================"

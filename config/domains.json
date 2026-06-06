@@ -680,7 +680,9 @@
       "description": "Experimental polish lenses for hedonic quality and reflective identity; evidence is weak and suggestions require strong project voice-profile fit.",
       "lenses": [
         "voice-and-microcopy",
-        "identity-and-ownership"
+        "identity-and-ownership",
+        "stimulation-moments",
+        "fitting-easter-eggs"
       ]
     }
   ]
