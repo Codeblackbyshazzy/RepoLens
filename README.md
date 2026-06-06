@@ -200,7 +200,7 @@ For the full legal text, see [LICENSE](LICENSE) (Apache License, Version 2.0, Se
 
 ## Modes
 
-RepoLens supports 10 modes. Each issue and backlog mode controls which domains/lenses are visible and how the agent iterates. `polish` is a separate suggestion workflow that writes ranked JSON artifacts and grouped polishing shortlists.
+RepoLens supports 11 modes. Each mode controls which domains/lenses are visible and how the agent iterates. `polish` is a suggestion workflow that writes ranked JSON artifacts and grouped polishing shortlists.
 
 | Mode         | DONE Streak | Domains                                    | Description                                                                   |
 | ------------ | ----------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
@@ -214,6 +214,7 @@ RepoLens supports 10 modes. Each issue and backlog mode controls which domains/l
 | `opensource` | 1×          | `open-source-readiness` domain (13 lenses) | Open-source readiness — checks if a repo can go public safely                 |
 | `content`    | 1×          | `content-quality` domain (17 lenses)       | Content audit & creation — audits or creates content from `--source` material |
 | `greenfield` | 1×          | `greenfield` domain (1 lenses)             | Spec-to-backlog planning — requires `--spec`, checks the current open issue or local draft backlog, and creates non-duplicate `[P0]`-`[P3]` implementation issues without inspecting repository code |
+| `polish`     | 1×          | `fluency`, `effort-signal`, and `hedonic` domains (16 lenses) | Ranked polishing shortlists — proposes small, additive craft refinements with voice-fit evidence |
 
 ### Mode Examples
 
@@ -658,6 +659,9 @@ To prune automatically at startup instead of running `clean` by hand, set `REPOL
 | **Open Source Readiness** | `opensource` | 13 lenses | Secret leaks, license compliance, dependency licensing, internal exposure, git history secrets, community readiness, documentation gaps, monetization exposure, PII, build reproducibility, security posture, code attribution, trademarks           |
 | **Content Quality**       | `content`    | 17 lenses | Content inventory, metadata, staleness, accessibility, linking, duplication, completeness, consistency, code examples, PII, multimedia, versioning, audience targeting, localization, topic extraction, planning, exercise design                    |
 | **Greenfield Planning**   | `greenfield` | 1 lens | Spec-led backlog planning for new or skeletal projects; creates one implementation-sized `[P0]`-`[P3]` issue per invocation, then continues until existing issues sufficiently cover the spec |
+| **Fluency**               | `polish`     | 6 lenses | Visual-UI processing-fluency refinements for contrast, alignment, spacing, motion, conventions, and typographic rhythm |
+| **Effort Signal**         | `polish`     | 6 lenses | Polishing forgotten corners, empty states, loading transparency, edge cases, errors, and offline or failure states |
+| **Hedonic**               | `polish`     | 4 lenses | Experimental polish lenses for voice, microcopy, identity, stimulation moments, and fitting hidden delights that require strong voice-profile fit |
 
 ## How It Works
 

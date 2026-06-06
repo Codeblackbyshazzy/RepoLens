@@ -84,7 +84,6 @@ mapfile -t cli_modes < <(
     awk '
       /^Modes:/ { in_modes = 1; next }
       in_modes && /^$/ { exit }
-      in_modes && $1 == "polish" { next }
       in_modes && /^[[:space:]]+[a-z][a-z0-9-]*[[:space:]]/ { print $1 }
     '
 )
@@ -167,6 +166,10 @@ assert_matches "opensource mode description" '(?i)`opensource`.*open.source|open
 echo ""
 echo "Test 11: Content mode has meaningful description"
 assert_matches "content mode description" '(?i)`content`.*content|content.*`content`' "$readme_content"
+
+echo ""
+echo "Test 11b: Polish mode has meaningful description"
+assert_matches "polish mode description" '(?i)`polish`.*polish|polish.*`polish`|`polish`.*shortlist|shortlist.*`polish`' "$readme_content"
 
 # =====================================================================
 # 5. Install instructions
@@ -262,7 +265,7 @@ echo ""
 echo "Test 26: New domains documented"
 # These domains are missing from the old README entirely. Check for their id or display name.
 # Use word-boundary-aware matching to avoid false positives (e.g., "deployment safety" != domain "deployment")
-for domain in "toolgate" "discovery" "deployment" "open-source-readiness" "content-quality" "visual-design" "design-system" "interaction-design" "information-architecture" "adaptive-ux" "ux-antipatterns"; do
+for domain in "toolgate" "discovery" "deployment" "open-source-readiness" "content-quality" "visual-design" "design-system" "interaction-design" "information-architecture" "adaptive-ux" "ux-antipatterns" "fluency" "effort-signal" "hedonic"; do
   domain_name="$(jq -r --arg d "$domain" '.domains[] | select(.id == $d) | .name' "$DOMAINS_FILE")"
   TOTAL=$((TOTAL + 1))
   # Check for domain appearing as a documented domain (in a table row, heading, or backtick-quoted)
@@ -316,6 +319,9 @@ assert_matches "discovery domain documented" '(?i)discover.*14 lenses|14.*discov
 assert_matches "deployment domain documented" '(?i)deploy.*26 lenses|26.*deploy|`deployment`' "$readme_content"
 assert_matches "open-source-readiness domain documented" '(?i)opensource.*13 lenses|13.*opensource|`open-source-readiness`|open.source.readiness' "$readme_content"
 assert_matches "content-quality domain documented" '(?i)content.*17 lenses|17.*content|`content-quality`|content.quality' "$readme_content"
+assert_matches "fluency domain documented" '(?i)polish.*fluency|fluency.*polish|`fluency`' "$readme_content"
+assert_matches "effort-signal domain documented" '(?i)polish.*effort-signal|effort-signal.*polish|`effort-signal`' "$readme_content"
+assert_matches "hedonic domain documented" '(?i)polish.*hedonic|hedonic.*polish|`hedonic`' "$readme_content"
 
 # =====================================================================
 # 14. Quickstart / first-run example
