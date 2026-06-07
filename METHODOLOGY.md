@@ -31,7 +31,7 @@ At execution time, a template engine merges a mode-specific base template with t
 - **Parallel execution** — lenses run concurrently via a file-based semaphore, with no shared state
 - **Agent-agnostic** — any LLM agent CLI (claude, codex, spark, opencode) can execute lenses
 
-The current issue/backlog lens inventory spans 33 domains with 336 total lenses, broken down as: 230 code analysis/audit-visible lenses (209 code analysis plus 21 runtime log analysis) + 18 tool gate + 14 product discovery + 43 deployment and Android audit + 13 open-source readiness + 17 content quality + 1 greenfield planning. Polish mode adds 16 suggestion lenses across the `fluency`, `effort-signal`, and `hedonic` domains.
+The current lens inventory spans 33 domains with 336 total lenses, broken down as: 230 code analysis/audit-visible lenses (209 code analysis plus 21 runtime log analysis) + 18 tool gate + 14 product discovery + 43 deployment and Android audit + 13 open-source readiness + 17 content quality + 1 greenfield planning. Polish mode adds 16 suggestion lenses across the `fluency`, `effort-signal`, and `hedonic` domains.
 
 ---
 
