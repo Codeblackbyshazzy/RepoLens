@@ -850,6 +850,9 @@ status_latest_file() {
   for dir in "$logs_dir"/*; do
     status_file="$dir/status.json"
     [[ -d "$dir" && -f "$status_file" ]] || continue
+    # Explicit supersede: a run marked no-longer-authoritative is never
+    # auto-selected, even if its status.json is the newest.
+    [[ -e "$dir/.superseded" ]] && continue
     if [[ -z "$newest_file" || "$status_file" -nt "$newest_file" ]]; then
       newest_file="$status_file"
     fi

@@ -122,6 +122,7 @@ usage() {
 Usage: repolens.sh --project <path> --agent <agent> [OPTIONS]
        repolens.sh status [run-id] [OPTIONS]
        repolens.sh clean [OPTIONS]
+       repolens.sh supersede <run-id>
 
 RepoLens — Multi-lens code audit tool. Runs expert analysis agents against
 any git repository and creates remote issues for real findings.
@@ -133,6 +134,8 @@ Required:
 Commands:
   status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
   clean [OPTIONS]         Remove old run directories under logs/ (see clean --help)
+  supersede <run-id>      Mark a run dir no-longer-authoritative (.superseded):
+                          hidden from status auto-select, eligible for clean
 
 Options:
   --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish
@@ -452,6 +455,14 @@ fi
 if [[ "${1:-}" == "clean" ]]; then
   shift
   clean_command "$@"
+  exit "$?"
+fi
+
+# `supersede` marks a run dir no-longer-authoritative by writing a .superseded
+# marker; like clean/status it needs no --project/--agent, so dispatch it here.
+if [[ "${1:-}" == "supersede" ]]; then
+  shift
+  supersede_command "$@"
   exit "$?"
 fi
 

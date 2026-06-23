@@ -61,6 +61,22 @@ Options:
 EOF
 }
 
+# supersede_usage — print `repolens.sh supersede` help. Side effects: stdout.
+supersede_usage() {
+  cat <<'EOF'
+Usage: repolens.sh supersede <run-id>
+
+Mark a run directory as no-longer-authoritative by writing a `.superseded`
+sentinel into logs/<run-id>/. A superseded run is hidden from `status`
+(no-arg auto-select) and becomes eligible for `clean` removal even when it
+would otherwise be protected as a resume candidate. A live/locked run is
+still never removed.
+
+<run-id> must be a direct child of logs/ and a genuine run dir (carrying
+summary.json or status.json). Ids containing '/', '.', or '..' are rejected.
+EOF
+}
+
 # _clean_parse_duration <spec> — echo the duration in seconds, or empty on a
 # malformed spec. Accepts Nd / Nh / Nm suffixes or a bare integer (seconds).
 _clean_parse_duration() {
@@ -187,6 +203,15 @@ _clean_is_locked() {
   return 0
 }
 
+# _clean_is_superseded <dir> — return 0 iff the run carries an explicit
+# `.superseded` marker written by `repolens.sh supersede`. Only a regular,
+# non-symlink file counts: `clean` DELETES, so the override trigger must be
+# trustworthy, never a dangling symlink or a directory.
+_clean_is_superseded() {
+  local marker="$1/.superseded"
+  [[ ! -L "$marker" && -f "$marker" ]]
+}
+
 # clean_command [OPTIONS] — the `repolens clean` subcommand. Removes eligible
 # old run dirs. Side effects: deletes directories under logs/ (unless
 # --dry-run), writes stdout. Returns 0 on success, non-zero on usage/removal
@@ -277,11 +302,14 @@ clean_command() {
     if (( run_mtime >= cutoff )); then
       continue
     fi
-    # Resume candidates.
-    if [[ "$keep_incomplete" == "true" ]] && _clean_is_incomplete "$run_dir"; then
+    # Resume candidates — unless explicitly superseded, which overrides the
+    # keep-incomplete protection so a retired run becomes removable.
+    if [[ "$keep_incomplete" == "true" ]] && ! _clean_is_superseded "$run_dir" \
+         && _clean_is_incomplete "$run_dir"; then
       continue
     fi
-    # Live runs.
+    # Live runs. This guard stays unconditional and after the supersede check,
+    # so a superseded run that is still live/locked is never removed.
     if _clean_is_locked "$run_dir"; then
       continue
     fi
@@ -330,6 +358,49 @@ clean_command() {
     echo "clean: failed to remove ${failed} run director(ies)." >&2
     return 1
   fi
+  return 0
+}
+
+# supersede_command <run-id> — the `repolens supersede` subcommand. Writes a
+# `.superseded` marker into logs/<run-id>/ atomically. Side effects: creates a
+# marker file under logs/; writes stdout/stderr. Returns 0 on success; non-zero
+# on a bad/traversal id, a missing or non-run dir, or a write failure.
+supersede_command() {
+  case "${1:-}" in
+    -h|--help) supersede_usage; return 0 ;;
+    "") echo "supersede: missing run id." >&2; supersede_usage >&2; return 1 ;;
+  esac
+  local run_id="$1"
+
+  # Reject traversal BEFORE building any path, exactly as status_resolve_file
+  # does. _clean_is_run_dir only regex-checks the basename, so an id containing
+  # '/' could still escape logs/ if the path were constructed first.
+  if [[ "$run_id" == *"/"* || "$run_id" == "." || "$run_id" == ".." ]]; then
+    echo "supersede: invalid run id '$run_id'. Run ids must be direct logs/ children." >&2
+    return 1
+  fi
+
+  local run_dir="${SCRIPT_DIR:-.}/logs/$run_id"
+  if ! _clean_is_run_dir "$run_dir"; then
+    echo "supersede: no genuine run dir at logs/$run_id." >&2
+    return 1
+  fi
+
+  # Atomic install: write a temp sibling then rename (atomic within one
+  # filesystem), matching the marker-write pattern used elsewhere.
+  local marker="$run_dir/.superseded"
+  local tmp="$run_dir/.superseded.tmp.$$"
+  if ! printf 'superseded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    echo "supersede: failed to write marker for $run_id." >&2
+    return 1
+  fi
+  if ! mv -f "$tmp" "$marker" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    echo "supersede: failed to install marker for $run_id." >&2
+    return 1
+  fi
+  echo "supersede: marked $run_id as superseded."
   return 0
 }
 

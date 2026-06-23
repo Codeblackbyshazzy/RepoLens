@@ -384,6 +384,7 @@ See [METHODOLOGY.md](METHODOLOGY.md) for the design rationale behind within-lens
 Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
        repolens.sh status [run-id] [OPTIONS]
        repolens.sh clean [OPTIONS]
+       repolens.sh supersede <run-id>
 ```
 
 ### Commands
@@ -392,6 +393,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `status [run-id]` | Show a live run snapshot from `logs/<run-id>/status.json`. If `run-id` is omitted, RepoLens selects the newest run that has a status file. Requires only `jq`. |
 | `clean [OPTIONS]`  | Remove old run directories under `logs/`. Only genuine run dirs are considered; resume candidates are kept by default, and currently-live runs are always kept. Needs no `--project`/`--agent`. See [Cleaning Up Old Runs](#cleaning-up-old-runs). |
+| `supersede <run-id>` | Mark a run dir as no-longer-authoritative by writing a `.superseded` marker into it. A superseded run is hidden from `status` auto-select and becomes eligible for `clean` even when it would otherwise be kept as a resume candidate; a live run is still never removed. Needs no `--project`/`--agent`. See [Retiring a Run](#retiring-a-run). |
 
 ### Required Flags
 
@@ -614,6 +616,21 @@ Run directories under `logs/` accumulate over time and are never removed automat
 | `-h`, `--help`        | —       | Show `clean` help.                                                                                                              |
 
 To prune automatically at startup instead of running `clean` by hand, set `REPOLENS_AUTO_CLEAN=true` (see [Environment Variables](#environment-variables)). RepoLens logs the resolved retention settings at INFO before starting the background prune. This is off by default.
+
+### Retiring a Run
+
+`clean` keeps any run that still looks resumable, which means a run you have deliberately abandoned can linger and keep being picked up as the newest one. Mark it as no-longer-authoritative with `supersede`:
+
+```bash
+./repolens.sh supersede 20260315T120000Z-a1b2c3d4
+```
+
+This writes a `.superseded` marker into `logs/<run-id>/` and changes two behaviors for that run:
+
+- `./repolens.sh status` (with no run id) skips it when auto-selecting the newest run, so a retired run no longer shadows the run you actually care about. Asking for it explicitly with `status <run-id>` still works.
+- `./repolens.sh clean` will remove it even though it would otherwise be protected as a resume candidate — you no longer need `--remove-incomplete` to clear that one run. A run a process is using right now is still never removed, marker or not.
+
+The `<run-id>` must be a direct child of `logs/` and a genuine run dir (one carrying `summary.json` or `status.json`). Ids containing `/`, `.`, or `..` are rejected, and superseding a missing or non-run directory exits non-zero with a message.
 
 ## Domains & Lenses (336 total across 33 domains)
 
