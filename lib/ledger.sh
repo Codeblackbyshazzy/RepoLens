@@ -368,3 +368,53 @@ build_findings_jsonl_from_local() {
 
   mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
 }
+
+# build_findings_csv <findings_jsonl_path> <out_csv_path>
+#   Projects the canonical finding registry (findings.jsonl, schema in
+#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 11-column header
+#   row, then one row per JSONL line, preserving JSONL line order
+#   (deterministic). Spreadsheet/grep users get a flat view without a second
+#   source of truth — findings.jsonl stays the full-fidelity registry.
+#
+#   Columns (exactly, in this order):
+#     id,title,severity,type,domain,lens,status,primary_location,confidence,
+#     duplicate_group,markdown_path
+#   The nested `validation` object and the `source_finding_paths` array are
+#   OMITTED — they don't flatten to a single cell. Keep this column list in
+#   lockstep with the jq array below; the header string and the array are two
+#   parallel lists (tests/test_ledger_csv.sh asserts the header byte-for-byte).
+#
+#   jq -r @csv owns all CSV quoting/escaping (RFC-4180): a field containing a
+#   comma, a double quote, or a newline is correctly quoted and inner quotes are
+#   doubled. A JSON null (or an absent key) renders as a bare empty cell.
+#   Numbers (e.g. confidence) render unquoted. Fields are read inside jq, so
+#   titles with shell metacharacters or unicode are never shell-evaluated.
+#
+#   Sibling of build_findings_jsonl_from_{manifest,local}: same atomic-write
+#   (tmp + mv) + jq-owns-escaping discipline. Pure: reads the JSONL, writes the
+#   CSV. An empty findings.jsonl yields a header-only CSV (matching the empty,
+#   zero-line registry), exit 0. Returns non-zero on missing args or a missing
+#   input file (no output written), and on a jq/IO failure (tmp cleaned up).
+build_findings_csv() {
+  local in="${1:-}" out="${2:-}"
+  [[ -n "$in" ]]  || { echo "build_findings_csv: missing findings.jsonl path" >&2; return 2; }
+  [[ -n "$out" ]] || { echo "build_findings_csv: missing out path" >&2; return 2; }
+  [[ -f "$in" ]]  || { echo "build_findings_csv: input not found: $in" >&2; return 2; }
+
+  local tmp="${out}.tmp.$$"
+  # Header first. Keep this list in lockstep with the jq array below.
+  printf '%s\n' \
+    'id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path' \
+    > "$tmp" || return 1
+
+  # One CSV row per JSONL value (jq streams values in input order). Raw field
+  # access (no `// ""`) so a JSON null becomes a bare empty cell, not the
+  # literal "null". An empty input yields zero rows -> header-only CSV, exit 0.
+  jq -r '
+    [ .id, .title, .severity, .type, .domain, .lens, .status,
+      .primary_location, .confidence, .duplicate_group, .markdown_path ]
+    | @csv
+  ' "$in" >> "$tmp" || { rm -f "$tmp"; return 1; }
+
+  mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
+}

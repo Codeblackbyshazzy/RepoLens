@@ -100,8 +100,21 @@ authoritative source is the named owner.
 
 ## `findings.csv`
 
-`findings.csv` is a flat projection of the **same** records: one row per finding,
-one column per scalar field. Object/array fields (e.g. `validation`) are
-serialized or omitted in the CSV; the JSONL remains the authoritative,
-fully-structured form. An empty run produces a **header-only** `findings.csv`
-(column headers, zero data rows), matching the empty (zero-line) `findings.jsonl`.
+`findings.csv` is a flat projection of the **same** records: a fixed header row
+followed by one row per finding, preserving `findings.jsonl` line order. It is a
+convenience view for spreadsheets and `grep`; `findings.jsonl` stays the
+authoritative, full-fidelity registry.
+
+The columns are exactly, in this order:
+
+```
+id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path
+```
+
+The `validation` object (and any array field, e.g. `source_finding_paths`) is
+**omitted** — it does not flatten to a single cell; read it from `findings.jsonl`
+when needed. CSV quoting is RFC-4180-safe: a value containing a comma, a double
+quote, or a newline (e.g. a title) is quoted and inner quotes are doubled. A JSON
+`null` or absent field renders as an empty cell; numbers (e.g. `confidence`) are
+unquoted. An empty run produces a **header-only** `findings.csv` (column headers,
+zero data rows), matching the empty (zero-line) `findings.jsonl`.
