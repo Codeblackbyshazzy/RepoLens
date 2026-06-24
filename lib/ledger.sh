@@ -219,3 +219,152 @@ build_findings_jsonl_from_manifest() {
 
   mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
 }
+
+# _ledger_trim_yaml_value <raw>
+#   Trims surrounding whitespace, then strips one surrounding pair of matching
+#   double or single quotes. A frontmatter `title: "[high] X"` must de-quote to
+#   the bare `[high] X` so it earns the SAME finding_id as the manifest path
+#   (the surrounding quotes otherwise prevent the [severity] prefix from being
+#   stripped during normalization — an id-divergence bug). Self-contained
+#   replica of lib/rounds.sh::_round_digest_trim_yaml_value (no dependency, to
+#   keep lib/ledger.sh sourceable on its own).
+_ledger_trim_yaml_value() {
+  local v="$*"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  v="${v#\"}"; v="${v%\"}"
+  v="${v#\'}"; v="${v%\'}"
+  printf '%s' "$v"
+}
+
+# _ledger_has_frontmatter <file>
+#   Returns 0 iff the file's first line is exactly `---` AND a closing `---`
+#   line exists below it. This is the validity gate used to skip malformed /
+#   frontmatter-less files. The closing-delimiter flag guards the END exit so a
+#   well-formed block reports success even though the rule already returned.
+_ledger_has_frontmatter() {
+  awk '
+    NR==1 && $0!="---" { exit 1 }
+    NR==1 { next }
+    $0=="---" { found=1; exit 0 }
+    END { if (!found) exit 1 }
+  ' "$1"
+}
+
+# _ledger_frontmatter_scalar <file> <key>
+#   Prints the raw (still-quoted) value of a scalar key found inside the leading
+#   `---` frontmatter block, or nothing when the key is absent. Reads ONLY the
+#   block (stops at the closing `---`), so a `key:`-looking line in the markdown
+#   body cannot be misparsed. Validity is checked separately by
+#   _ledger_has_frontmatter; this reader has no END block so its rule exits are
+#   authoritative (printing the value never gets clobbered by a guard).
+_ledger_frontmatter_scalar() {
+  local file="$1" key="$2"
+  awk -v key="$key" '
+    NR==1 && $0!="---" { exit 0 }
+    NR==1 { next }
+    $0=="---" { exit 0 }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*:" {
+      sub("^[[:space:]]*" key "[[:space:]]*:[[:space:]]*", "")
+      print
+      exit 0
+    }
+  ' "$file"
+}
+
+# build_findings_jsonl_from_local <output_dir> <out_jsonl_path>
+#   Ingests the markdown findings written by `--local` mode into the canonical
+#   finding registry as JSON Lines. Recursively finds every `*.md` under
+#   <output_dir>, parses each file's leading YAML frontmatter
+#   (title/severity/domain/lens) and emits one registry record per file that
+#   carries a valid frontmatter block, mapped onto the 12-field schema in
+#   docs/finding-registry-schema.md.
+#
+#   Sibling of build_findings_jsonl_from_manifest (#314): same null-slot
+#   conventions and the same atomic-write + jq-owns-escaping discipline, with
+#   two deliberate differences —
+#   - markdown_path is POPULATED with the .md file's path (the point of #319:
+#     link the registry row back to the human-readable file). The path is
+#     emitted exactly as `find` yields it (i.e. relative to / prefixed by
+#     <output_dir>), so it opens directly from where the registry lives.
+#   - duplicate_group is null and source_finding_paths is OMITTED: local runs
+#     have no synthesizer clusters, so there is nothing to seed or pass through.
+#
+#   Field sourcing:
+#   - title/severity/domain/lens come from the frontmatter (YAML-dequoted).
+#   - domain/lens fall back to directory components
+#     (<output_dir>/<domain>/<lens>/NNN-x.md) ONLY when the frontmatter omits
+#     them AND the nesting depth exists; a flat <output_dir>/NNN-x.md without
+#     frontmatter domain/lens leaves them "" (no bogus value from the dir name).
+#   - id is content-derived via finding_id over the DE-QUOTED title (no
+#     primary_location), so the same finding earns the same id whether it
+#     arrived via a manifest cluster or a local .md file.
+#   - severity is run through _ledger_severity_normalize ("Critical"->"critical").
+#   - type/confidence are null, primary_location is "", validation is {},
+#     status is "new" (owned by sibling agents).
+#
+#   jq owns all quoting/escaping: title/domain/lens/markdown_path are passed as
+#   --arg and the object is built inside jq, so titles with quotes, `$()`,
+#   backticks, or unicode round-trip intact and are never shell-evaluated.
+#
+#   A file without a valid frontmatter block is skipped with a stderr warning
+#   (not fatal — the function still returns 0). An empty / no-`.md` dir yields an
+#   empty output file (0 lines), exit 0. find output is sorted so rebuilds are
+#   byte-identical. Output is written atomically (tmp + mv). Returns non-zero on
+#   missing args or a missing <output_dir>, and on a missing out-path parent dir
+#   (the atomic write fails) — no output is written in those cases.
+build_findings_jsonl_from_local() {
+  local dir="${1:-}" out="${2:-}"
+  [[ -n "$dir" ]] || { echo "build_findings_jsonl_from_local: missing output_dir" >&2; return 2; }
+  [[ -n "$out" ]] || { echo "build_findings_jsonl_from_local: missing out path" >&2; return 2; }
+  [[ -d "$dir" ]] || { echo "build_findings_jsonl_from_local: output_dir not found: $dir" >&2; return 2; }
+
+  local tmp="${out}.tmp.$$"
+  : > "$tmp" || return 1
+
+  local file rel title severity domain lens id sev
+  while IFS= read -r -d '' file; do
+    # Skip + warn (not fatal) when there is no valid leading frontmatter block.
+    if ! _ledger_has_frontmatter "$file"; then
+      echo "build_findings_jsonl_from_local: no valid frontmatter, skipping: $file" >&2
+      continue
+    fi
+
+    title="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" title)")"
+    severity="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" severity)")"
+    domain="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" domain)")"
+    lens="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" lens)")"
+
+    # Directory fallback only when the <domain>/<lens> nesting actually exists.
+    # rel like <domain>/<lens>/NNN-x.md has 3+ path components; a flat file does
+    # not, so we never derive a bogus domain/lens from <output_dir>'s own name.
+    rel="${file#"$dir"/}"
+    if [[ -z "$domain" || -z "$lens" ]] && [[ "$rel" == */*/* ]]; then
+      [[ -z "$lens"   ]] && lens="$(basename "$(dirname "$file")")"
+      [[ -z "$domain" ]] && domain="$(basename "$(dirname "$(dirname "$file")")")"
+    fi
+
+    id="$(finding_id "$domain" "$lens" "$title")"
+    sev="$(_ledger_severity_normalize "$severity")"
+
+    jq -cn \
+      --arg id "$id" --arg title "$title" --arg severity "$sev" \
+      --arg domain "$domain" --arg lens "$lens" --arg md "$file" '
+      {
+        id: $id,
+        title: $title,
+        severity: $severity,
+        type: null,
+        domain: $domain,
+        lens: $lens,
+        status: "new",
+        primary_location: "",
+        confidence: null,
+        duplicate_group: null,
+        markdown_path: $md,
+        validation: {}
+      }' >> "$tmp" || { rm -f "$tmp"; return 1; }
+  done < <(find "$dir" -type f -name '*.md' -print0 | LC_ALL=C sort -z)
+
+  mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
+}
