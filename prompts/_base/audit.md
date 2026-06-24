@@ -33,6 +33,13 @@ Every issue MUST have this structure:
 - **Evidence** — Code snippets, specific file:line references, reproduction steps
 - **Recommended Fix** — Concrete, actionable remediation steps a developer can complete in ~1 hour
 - **References** — Links to relevant standards, documentation, or best practices
+- **Validation** — A required machine-readable evidence block. Emit a `## Validation` section with these exact lowercase-snake_case field names (the downstream parser keys off them verbatim):
+  - `attacker_source` — where untrusted input originates (or `n/a` for non-security findings)
+  - `missing_guard` — the check or control that is absent or wrong
+  - `sink_effect` — what the unguarded path actually does (the impact mechanism)
+  - `preconditions` — what must hold for the issue to trigger
+  - `proof_anchors` — EXACT `file:line` references from THIS repository and/or short code quotes that prove the claim
+  - `suggested_validation` — a concrete shell command OR test that confirms the finding; a single runnable command when the finding is locally checkable
 
 ### Quality Standards
 - Only report **real findings** backed by evidence in the code. No hypotheticals.

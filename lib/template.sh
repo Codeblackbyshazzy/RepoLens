@@ -556,6 +556,14 @@ labels:
 
 ## References
 ...
+
+## Validation
+- attacker_source — where untrusted input originates (or n/a for non-security findings)
+- missing_guard — the check or control that is absent or wrong
+- sink_effect — what the unguarded path actually does (the impact mechanism)
+- preconditions — what must hold for the issue to trigger
+- proof_anchors — EXACT path:line references from THIS repository and/or short code quotes that prove the claim
+- suggested_validation — a concrete shell command OR test that confirms the finding (a single runnable command when locally checkable)
 \`\`\`
 
 ### Deduplication
