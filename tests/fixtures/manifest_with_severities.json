@@ -1,0 +1,9 @@
+[
+  {"severity": "critical", "title": "c1"},
+  {"severity": "high",     "title": "h1"},
+  {"severity": "HIGH",     "title": "h2"},
+  {"severity": "[Medium]", "title": "m1"},
+  {"severity": "low",      "title": "l1"},
+  {"severity": "info",     "title": "skipped-invalid"},
+  {"title": "cross-link action with no severity"}
+]
