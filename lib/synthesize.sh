@@ -386,6 +386,179 @@ _synthesize_jaccard_x10000() {
   printf '%d' $(( intersection * 10000 / union ))
 }
 
+# _synthesize_attach_also_reported_by <manifest_path>
+#   Deterministic, model-free post-synthesis pass (#328). Groups the candidate
+#   manifest's records into duplicate groups (transitive closure / connected
+#   components of _dedupe_is_match over every record pair), picks the canonical
+#   record per group via _dedupe_pick_canonical, and attaches a sorted
+#   also_reported_by[] array to ONLY the canonical record. Each element is
+#   { "lens": <id>, "domain": <id>, "markdown_path": <path> }, one per
+#   NON-canonical contributor in the group; markdown_path is the contributor's
+#   first source_finding_paths[] entry (deterministic). Non-canonical records
+#   are left untouched (they do NOT gain the field). A group of size 1 produces
+#   no also_reported_by.
+#
+#   IDEMPOTENT: any pre-existing also_reported_by on every object record is
+#   stripped first and recomputed; grouping/selection key off title, location,
+#   severity, and confidence only (never off also_reported_by), and the array
+#   is sorted by (domain, lens, markdown_path), so a re-run is byte-identical.
+#
+#   Operates in place on the candidate file (jq into a temp, mv back), mirroring
+#   _synthesize_filter_manifest_min_severity. Returns non-zero on any jq/helper
+#   failure, leaving the candidate untouched so run_synthesizer discards it.
+#   No model invocation. Pure transform of the JSON array.
+#
+#   The non-canonical records are intentionally NOT removed or marked (that is
+#   #335, out of scope): only location-based duplicate groups (title similarity
+#   below validate_manifest's 0.85 bar, same file) survive the downstream title
+#   gate and therefore actually carry also_reported_by[] in production.
+_synthesize_attach_also_reported_by() {
+  local manifest="${1:-}"
+  [[ -n "$manifest" && -f "$manifest" ]] || return 2
+
+  # Lazy-load the dedupe helpers (#316 canonical selection, #322 matching). By
+  # the time run_synthesizer reaches this pass, synthesize.sh is fully loaded,
+  # so dedupe.sh's own on-demand source of synthesize.sh is a no-op and there
+  # is no recursive source.
+  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
+     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
+    local _sx_dedupe_lib
+    _sx_dedupe_lib="$(_synthesize_repo_root)/lib/dedupe.sh"
+    # shellcheck source=/dev/null
+    [[ -f "$_sx_dedupe_lib" ]] && source "$_sx_dedupe_lib"
+    unset _sx_dedupe_lib
+  fi
+  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
+     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
+    echo "_synthesize_attach_also_reported_by: dedupe helpers unavailable" >&2
+    return 1
+  fi
+
+  # Must be a JSON array; -1 sentinel marks "not an array" so we bail cleanly
+  # (validate_manifest reports the shape error separately).
+  local count
+  count="$(jq 'if type == "array" then length else -1 end' "$manifest" 2>/dev/null)" || return 1
+  [[ "$count" -ge 0 ]] || return 1
+
+  # assign: JSON object mapping a canonical record's array index (as a string)
+  # to its computed contributor list. Empty when there are no duplicate groups;
+  # the final jq still strips stale also_reported_by, keeping tiny manifests
+  # idempotent.
+  local assign='{}'
+
+  if (( count >= 2 )); then
+    # Load each record (compact, one line) into an index-addressed array.
+    local -a records=()
+    local rec
+    while IFS= read -r rec; do
+      records+=("$rec")
+    done < <(jq -c '.[]' "$manifest") || return 1
+    if (( ${#records[@]} != count )); then
+      return 1
+    fi
+
+    # Union-find over record indices: union i,j whenever they match. Identity is
+    # the array INDEX, never cluster_id (two grouped records may share one).
+    local -a parent=()
+    local i j
+    for (( i = 0; i < count; i++ )); do
+      parent[i]=$i
+    done
+    for (( i = 0; i < count; i++ )); do
+      for (( j = i + 1; j < count; j++ )); do
+        if _dedupe_is_match "${records[i]}" "${records[j]}"; then
+          local ri="$i" rj="$j"
+          while [[ "${parent[ri]}" != "$ri" ]]; do ri="${parent[ri]}"; done
+          while [[ "${parent[rj]}" != "$rj" ]]; do rj="${parent[rj]}"; done
+          if [[ "$ri" != "$rj" ]]; then
+            parent[rj]="$ri"
+          fi
+        fi
+      done
+    done
+
+    # Bucket indices by connected-component root.
+    local -A groups=()
+    local root
+    for (( i = 0; i < count; i++ )); do
+      root="$i"
+      while [[ "${parent[root]}" != "$root" ]]; do root="${parent[root]}"; done
+      groups[$root]+="$i "
+    done
+
+    # For each group of size >= 2, pick the canonical by index and build the
+    # contributor list for every non-canonical member.
+    local members
+    for root in "${!groups[@]}"; do
+      local -a midx=()
+      read -ra midx <<< "${groups[$root]}"
+      (( ${#midx[@]} >= 2 )) || continue
+
+      # Tag each member with its global index so canonical selection is keyed on
+      # the unambiguous index rather than a possibly-shared cluster_id.
+      local idx_json subarray canon_idx
+      idx_json="$(printf '%s\n' "${midx[@]}" | jq -cs '.')" || return 1
+      subarray="$(jq -c --argjson idx "$idx_json" \
+        '[ $idx[] as $k | .[$k] + {__rl_idx: $k} ]' "$manifest")" || return 1
+
+      canon_idx="$(_dedupe_pick_canonical "$subarray" __rl_idx)" || return 1
+      [[ -n "$canon_idx" ]] || return 1
+
+      # Non-canonical contributor indices.
+      local -a contrib=()
+      local m
+      for m in "${midx[@]}"; do
+        [[ "$m" == "$canon_idx" ]] && continue
+        contrib+=("$m")
+      done
+      (( ${#contrib[@]} >= 1 )) || continue
+
+      local contrib_idx_json contrib_json
+      contrib_idx_json="$(printf '%s\n' "${contrib[@]}" | jq -cs '.')" || return 1
+      contrib_json="$(jq -c --argjson idx "$contrib_idx_json" '
+        [ $idx[] as $k
+          | .[$k]
+          | {
+              lens: (.lens // ""),
+              domain: (.domain // ""),
+              markdown_path: ((.source_finding_paths // [])[0] // "")
+            }
+        ]
+      ' "$manifest")" || return 1
+
+      assign="$(jq -c --arg k "$canon_idx" --argjson v "$contrib_json" \
+        '.[$k] = $v' <<<"$assign")" || return 1
+    done
+  fi
+
+  # Single atomic rewrite: strip stale also_reported_by from every object, then
+  # set the sorted array on each canonical index. Non-object array elements (if
+  # any survive to this pre-validation stage) pass through untouched.
+  local tmp="${manifest}.arb.$$"
+  if ! jq --argjson assign "$assign" '
+    to_entries
+    | map(
+        .value as $v
+        | (.key | tostring) as $k
+        | if ($v | type) == "object"
+          then ($v | del(.also_reported_by)) as $base
+            | if ($assign | has($k))
+              then $base + { also_reported_by: ($assign[$k] | sort_by(.domain, .lens, .markdown_path)) }
+              else $base
+              end
+          else $v
+          end
+      )
+  ' "$manifest" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv "$tmp" "$manifest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # validate_manifest <manifest_path>
 #   Validates a synthesizer manifest. Performs:
 #     1. JSON parse and top-level-array shape check.
@@ -831,6 +1004,18 @@ run_synthesizer() {
       rm -f "$final_dir/cross-link-actions.preserved.json"
       return 1
     fi
+  fi
+
+  # Attach also_reported_by[] to each canonical record (#328). Runs after the
+  # min-severity filter so groups form over only the surviving records, and
+  # before validate_manifest so the promoted manifest is validated WITH the new
+  # field (forward-compat). Pure, model-free, deterministic, idempotent.
+  if ! _synthesize_attach_also_reported_by "$candidate"; then
+    echo "run_synthesizer: failed to attach also_reported_by[]" >&2
+    rm -f "$candidate"
+    rm -f "$final_dir/manifest.json"
+    rm -f "$final_dir/cross-link-actions.preserved.json"
+    return 1
   fi
 
   if ! validate_manifest "$candidate"; then
