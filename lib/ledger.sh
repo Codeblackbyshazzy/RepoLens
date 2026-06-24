@@ -418,3 +418,96 @@ build_findings_csv() {
 
   mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
 }
+
+# validate_findings_jsonl <findings_jsonl_path>
+#   Validates the JSON-Lines finding registry (schema:
+#   docs/finding-registry-schema.md) PER LINE. This is the last line of defense
+#   so siblings (dedupe/validation/triage/html/csv) can trust the structure even
+#   if a builder regresses or a future producer writes the file. It mirrors
+#   validate_manifest's reporting discipline (every message to stderr, prefixed
+#   "validate_findings_jsonl: ...", accumulate-then-return), but iterates line by
+#   line because JSONL is one independent JSON object per line: a single jq pass
+#   would abort on the first malformed line, skip every line after it, and could
+#   not attribute a violation to a line number.
+#
+#   Per non-empty line it asserts: the line parses as a JSON object; the 12
+#   required keys are present (id, title, severity, type, domain, lens, status,
+#   primary_location, confidence, duplicate_group, markdown_path, validation); id
+#   is a non-empty string; severity in {critical,high,medium,low}; status in
+#   {new,duplicate,needs-validation,likely-false-positive}; a non-null, non-empty
+#   type in {security,reliability,performance,maintainability,test-gap,
+#   external-dependency} (null/empty type accepted — owned by finding-types);
+#   validation is an object (internals NOT checked — owned by validation-hints).
+#   Extra/forward-compatible keys (e.g. source_finding_paths) are tolerated.
+#
+#   Empty file -> 0. Returns 0 when every line is valid, 1 on any violation,
+#   2 on missing arg / missing file. Pure: reads only, no writes, no model.
+validate_findings_jsonl() {
+  local findings="${1:-}"
+  if [[ -z "$findings" ]]; then
+    echo "validate_findings_jsonl: missing findings.jsonl path" >&2
+    return 2
+  fi
+  if [[ ! -f "$findings" ]]; then
+    echo "validate_findings_jsonl: findings.jsonl not found: $findings" >&2
+    return 2
+  fi
+
+  local errors=0 lineno=0 line out rc violation
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    # Skip genuinely blank lines (e.g. a trailing newline). lineno is still
+    # incremented above so reported numbers match what an editor shows.
+    [[ -n "${line//[[:space:]]/}" ]] || continue
+
+    # One jq pass per line emits one violation string per problem. The
+    # `if type != "object"` guard is load-bearing: has(...) on a non-object
+    # raises a jq error, so we branch on object-ness first. A valid-but-non-object
+    # line (e.g. a bare array/scalar) parses with rc=0 and falls into the
+    # "not a JSON object" arm; an unparseable line makes jq exit non-zero and is
+    # caught by the rc != 0 arm below. Enum checks are guarded by has(...) so a
+    # MISSING key reports only "missing required key: ..." without duplicate noise.
+    out="$(jq -r '
+      def is_nonempty_string: type == "string" and length > 0;
+      def severities: ["critical","high","medium","low"];
+      def statuses:   ["new","duplicate","needs-validation","likely-false-positive"];
+      def types:      ["security","reliability","performance","maintainability","test-gap","external-dependency"];
+      if type != "object" then "not a JSON object"
+      else
+        . as $v
+        | (
+            (["id","title","severity","type","domain","lens","status","primary_location","confidence","duplicate_group","markdown_path","validation"][] as $k
+              | select(($v | has($k)) | not)
+              | "missing required key: \($k)"),
+            (if ($v | has("id")) and ($v.id | is_nonempty_string | not)
+               then "id must be a non-empty string" else empty end),
+            (if ($v | has("severity")) and ((severities | index($v.severity)) == null)
+               then "invalid severity: \($v.severity | tostring)" else empty end),
+            (if ($v | has("status")) and ((statuses | index($v.status)) == null)
+               then "invalid status: \($v.status | tostring)" else empty end),
+            (if ($v.type != null and $v.type != "") and ((types | index($v.type)) == null)
+               then "invalid type: \($v.type | tostring)" else empty end),
+            (if ($v | has("validation")) and (($v.validation | type) != "object")
+               then "validation must be an object" else empty end)
+          )
+      end
+    ' <<<"$line" 2>/dev/null)"
+    rc=$?
+
+    if (( rc != 0 )); then
+      # jq could not parse the line -> not valid JSON (and so not an object).
+      echo "validate_findings_jsonl: line $lineno: not a JSON object" >&2
+      errors=$((errors + 1))
+      continue
+    fi
+
+    while IFS= read -r violation; do
+      [[ -n "$violation" ]] || continue
+      echo "validate_findings_jsonl: line $lineno: $violation" >&2
+      errors=$((errors + 1))
+    done <<< "$out"
+  done < "$findings"
+
+  (( errors == 0 )) || return 1
+  return 0
+}
