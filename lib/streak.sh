@@ -152,7 +152,7 @@ _streak_record_local_filtered() {
 #   Counts .md files in a directory (maxdepth 1, no subdirectories).
 #   Returns count on stdout. Returns 0 if directory is empty or missing.
 count_dry_run_issues() {
-  local dir="$1" file raw_severity severity title count content_mode min_severity domain lens log_title
+  local dir="$1" file raw_severity severity title count content_mode min_severity domain lens log_title title_sev mismatch_msg
   [[ -d "$dir" ]] || { echo 0; return 0; }
   if [[ -z "${REPOLENS_MIN_SEVERITY:-}" ]]; then
     find "$dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | wc -l
@@ -183,6 +183,18 @@ count_dry_run_issues() {
     fi
 
     severity="$(severity_normalize "$raw_severity")"
+
+    # Single-source-of-truth check (#331): frontmatter `severity:` wins; the
+    # title "[SEVERITY]" prefix is advisory. Surface a non-fatal warning when
+    # they disagree, but keep using the frontmatter-derived severity for all
+    # counting/filtering decisions below — this is purely additive and must not
+    # change counts or which findings are kept.
+    if ! detect_severity_mismatch "$raw_severity" "$title" >/dev/null; then
+      title_sev="$(severity_from_title "$title")"
+      mismatch_msg="[$domain/$lens] Severity mismatch for \"$log_title\": frontmatter=${severity:-<none>} title=${title_sev:-<none>} - using frontmatter"
+      _streak_log_min_severity_warn "$mismatch_msg"
+    fi
+
     if [[ -n "$severity" ]]; then
       if severity_meets_min "$severity" "$min_severity"; then
         count=$((count + 1))

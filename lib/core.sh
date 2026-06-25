@@ -120,6 +120,40 @@ finding_type_normalize() {
   esac
 }
 
+# severity_from_title <title>
+#   Extracts a normalized severity from a leading "[SEVERITY]" title prefix,
+#   reusing the strict prefix regex from _synthesize_normalize_title
+#   (^\[([A-Za-z]+)\][[:space:]]*(.*)$). This is ADVISORY / display-only and must
+#   NEVER be used as a data source — frontmatter `severity:` is the single source
+#   of truth (issue #331). Prints the canonical severity (via severity_normalize)
+#   when the bracketed word is a recognized severity, or empty string when there
+#   is no prefix or the bracketed word is not a severity. Pure; set -u safe.
+severity_from_title() {
+  local title="${1:-}"
+  if [[ "$title" =~ ^\[([A-Za-z]+)\][[:space:]]*(.*)$ ]]; then
+    severity_normalize "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf ''
+}
+
+# detect_severity_mismatch <frontmatter_severity> <title_or_filename>
+#   Frontmatter is the single source of truth (issue #331). Compares the
+#   canonical frontmatter severity against any severity carried by the title's
+#   "[SEVERITY]" prefix. ALWAYS prints the canonical frontmatter severity on
+#   stdout (the data channel), so callers consume it as the authoritative value
+#   regardless of outcome. The exit code is the only mismatch signal:
+#     Returns 0 when they agree OR the title carries no severity prefix.
+#     Returns non-zero when the title severity is present and disagrees.
+#   Emits no log itself — the caller decides how to warn. Pure; set -u safe.
+detect_severity_mismatch() {
+  local fm_raw="${1:-}" title="${2:-}" fm title_sev
+  fm="$(severity_normalize "$fm_raw")"
+  printf '%s' "$fm"
+  title_sev="$(severity_from_title "$title")"
+  [[ -z "$title_sev" || "$title_sev" == "$fm" ]]
+}
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
