@@ -250,3 +250,131 @@ generate_needs_review_md() {
   rm -f -- "$tmp"
   return 1
 }
+
+# generate_duplicates_md <findings_jsonl> <out_file>
+#   Renders the "N lenses converged on the same finding" list to <out_file> as
+#   Markdown, one section per MERGED GROUP: the canonical finding (severity, type,
+#   primary_location and, when present, a link to its markdown_path) followed by
+#   the OTHER lenses that also reported it (its `also_reported_by` list). Reads the
+#   JSON-Lines registry with `jq -rs` (slurp) so ordering spans every record.
+#   Sibling of generate_todo_md / generate_needs_review_md; renders only — it never
+#   builds or mutates the registry.
+#
+#   MERGED-GROUP PREDICATE (research "Reading A" — the recommended/owner design):
+#     include  <=>  `also_reported_by` is a NON-EMPTY array.
+#     - That record IS the canonical (the synthesize step attaches
+#       `also_reported_by` only to the canonical of a group), and its array already
+#       enumerates every OTHER reporter. The reporter count is therefore
+#       1 + (also_reported_by | length).
+#     - `duplicate_group` is the section's group identity (shown as a "Group:" line
+#       when present), but grouping NEVER depends on its value — so a null / missing
+#       / non-string `duplicate_group` cannot crash the generator and the literal
+#       "null" never leaks (it is rendered through the same defensive path).
+#     - This is robust to today's data: `also_reported_by` is not yet carried into
+#       findings.jsonl (the manifest->registry build drops it), so today every
+#       record degrades to a singleton, yielding ZERO groups and the clean
+#       empty-state path. The renderer lights up automatically once the
+#       carry-through lands — no code change here. This mirrors how
+#       generate_needs_review_md treats the opaque `validation` object: a
+#       missing / null / wrong-typed value degrades to no-match, never a crash.
+#
+#   SINGLETONS — EXCLUDED (the documented rule). DUPLICATES.md is ABOUT
+#   convergence; a singleton has nothing to merge and already appears in TODO.md /
+#   NEEDS_REVIEW.md. A record with no / empty / non-array `also_reported_by` is a
+#   singleton and is excluded by definition (never rendered, never an empty link).
+#
+#   Each `also_reported_by[]` element is { "lens": <id>, "domain": <id>,
+#   "markdown_path": <path> } (one per non-canonical contributor; markdown_path may
+#   be ""). Rendered "<domain>/<lens>" with an optional link when markdown_path is
+#   non-empty.
+#
+#   ORDERING: severity rank desc (critical>high>medium>low; unknown last), then
+#   confidence desc (null treated as the 0.5 neutral midpoint), then duplicate_group
+#   then id ascending as a stable tiebreak so output is byte-identical across runs
+#   (no timestamps).
+#
+#   RENDERING is defensive (mirrors the siblings): null/empty severity/type/
+#   primary_location/domain/lens render as an em dash, never the literal "null"; a
+#   null/empty markdown_path (canonical OR contributor) emits NO link (never a
+#   broken "[...]()"). Fields are emitted verbatim by jq, so a title containing
+#   backticks / $() / pipes is data, never shell-evaluated.
+#
+#   EMPTY / MISSING INPUT: a missing or unreadable input path returns 2 and writes
+#   nothing (no crash). A present-but-empty or all-singleton registry writes a valid
+#   file with a "no duplicate groups" note and returns 0.
+#
+#   Pure apart from the documented write of <out_file> (atomic tmp+mv). Returns 0 on
+#   success, 2 on bad/unreadable input, 1 on a render/IO failure.
+generate_duplicates_md() {
+  local findings_jsonl="${1:-}" out_file="${2:-}"
+
+  # Bad args or an unreadable/missing input -> rc 2, nothing written, no crash.
+  [[ -n "$findings_jsonl" && -n "$out_file" ]] || return 2
+  [[ -f "$findings_jsonl" && -r "$findings_jsonl" ]] || return 2
+
+  local out_dir
+  out_dir="$(dirname -- "$out_file")"
+  mkdir -p -- "$out_dir" 2>/dev/null || return 1
+
+  local tmp
+  tmp="$(mktemp "$out_dir/.duplicates.XXXXXX")" || return 1
+
+  if jq -rs --arg ph "—" '
+       def rank: {critical:3, high:2, medium:1, low:0}[(.severity // "")] // -1;
+       def conf: (if (.confidence | type) == "number" then .confidence else 0.5 end);
+       def disp(v): (if (v == null or v == "") then $ph else (v | tostring) end);
+       # Reading A: a merged group is a record whose also_reported_by is a NON-EMPTY
+       # array. A missing / null / non-array value degrades to [] (a singleton).
+       def arb: (if (.also_reported_by | type) == "array" then .also_reported_by else [] end);
+
+       ( map(select((arb | length) > 0))
+         | map(. + {_rank: rank, _conf: conf, _arb: arb})
+         | sort_by([(._rank * -1), (._conf * -1), (.duplicate_group // ""), (.id // "")])
+         | map(
+             "## [" + ((.severity // "") | ascii_upcase) + "] "
+               + (.title // "(untitled)") + "\n"
+             + "- **Severity:** " + disp(.severity) + "\n"
+             + "- **Type:** " + disp(.type) + "\n"
+             + "- **Location:** " + disp(.primary_location) + "\n"
+             + (if (.duplicate_group == null or .duplicate_group == "")
+                then ""
+                else "- **Group:** " + (.duplicate_group | tostring) + "\n"
+                end)
+             + "- **Also reported by:** " + ((._arb | length) | tostring)
+               + " other lens(es):\n"
+             + ( ._arb
+                 | map(
+                     "  - " + disp(.domain) + "/" + disp(.lens)
+                     + (if (.markdown_path == null or .markdown_path == "")
+                        then ""
+                        else " ([" + (.markdown_path | tostring)
+                               + "](" + (.markdown_path | tostring) + "))"
+                        end)
+                   )
+                 | join("\n")
+               ) + "\n"
+             + (if (.markdown_path == null or .markdown_path == "")
+                then ""
+                else "- **Details:** [" + (.markdown_path | tostring)
+                       + "](" + (.markdown_path | tostring) + ")\n"
+                end)
+           )
+       ) as $entries
+       | "# DUPLICATES — Merged Finding Groups\n\n"
+         + "Groups where two or more lenses converged on the same finding (a "
+         + "confidence signal). Each entry shows the canonical finding plus the "
+         + "other lenses that also reported it. Singleton findings are excluded — "
+         + "they appear in TODO.md / NEEDS_REVIEW.md. Ordered by severity then "
+         + "confidence.\n\n"
+         + (if ($entries | length) == 0
+            then "_No duplicate groups — no two lenses converged on the same finding._\n"
+            else ($entries | join("\n"))
+            end)
+     ' "$findings_jsonl" >"$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$out_file"
+    return 0
+  fi
+
+  rm -f -- "$tmp"
+  return 1
+}
