@@ -71,6 +71,8 @@ source "$SCRIPT_DIR/lib/forge.sh"
 source "$SCRIPT_DIR/lib/human_review.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/artifacts.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/local-dedupe.sh"
 
 VERSION="0.2.0"
 
@@ -3624,6 +3626,21 @@ if declare -p _FORGE_WARN_SEEN >/dev/null 2>&1 && (( ${#_FORGE_WARN_SEEN[@]} > 0
 fi
 
 finalize_summary "$SUMMARY_FILE"
+
+# --- Local-mode deterministic dedupe (non-fatal) ---
+# In --local mode the NNN-<slug>.md tree under $OUTPUT_DIR is the deliverable.
+# Reconcile cross-lens/cross-domain duplicate findings into canonical + duplicate
+# using the SAME match + canonical-selection helpers as the manifest path,
+# marking files IN PLACE (never deleting). Deterministic, idempotent, model-free.
+# Non-fatal, mirroring the verifier / synthesizer / triage precedent: a failure
+# warns and NEVER touches REPOLENS_FINAL_STATE or RUN_ROUNDS_RC.
+if $LOCAL_MODE && [[ -n "$OUTPUT_DIR" && -d "$OUTPUT_DIR" ]]; then
+  if dedupe_local_markdown "$OUTPUT_DIR"; then
+    log_info "Local dedupe: reconciled duplicate markdown findings under $OUTPUT_DIR"
+  else
+    log_warn "Local dedupe: failed (findings left un-deduped)"
+  fi
+fi
 
 # --- Human review digest (non-fatal) ---
 # When --human-review is set and the finding registry exists, render the curated
