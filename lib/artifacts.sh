@@ -122,6 +122,115 @@ generate_todo_md() {
   return 1
 }
 
+# generate_summary_md <findings_jsonl> <out_file>
+#   Renders the executive "Top 20 findings by risk" view to <out_file> as
+#   Markdown, one ranked entry per finding showing severity, type,
+#   primary_location and (when present) a link to its markdown_path. Reads the
+#   JSON-Lines registry with `jq -rs` (slurp) so the ranking spans every record.
+#   Sibling of generate_todo_md / generate_needs_review_md / generate_duplicates_md;
+#   it only RENDERS — it never builds or mutates the registry.
+#
+#   RISK (issue #336 AC #1) — risk = severity rank x confidence, ranked
+#   descending, mirroring lib/risk.sh::finding_risk_score / lib/core.sh::
+#   severity_rank exactly (the formula is kept INLINE in jq so this file stays
+#   self-sourceable and avoids one subprocess per finding; AC #4 sanctions this
+#   inline mirror as the documented fallback). Severity rank: critical=3, high=2,
+#   medium=1, low=0. Confidence: the numeric value if present, else the 0.5
+#   neutral default (mirrors lib/risk.sh's _risk_confidence_normalize, so an
+#   unscored finding is not buried). Two distinct ranks are used: `// 0` for the
+#   SCORE (matches finding_risk_score, which clamps an invalid rank to 0 — never
+#   a negative risk) and `// -1` for the tiebreak (so an unknown-severity finding
+#   sorts LAST). Note: `low` always scores 0 (rank 0), so confidence cannot order
+#   findings within the low band — by design, not a bug.
+#
+#   POPULATION (research §3.2 — the recommended/owner design): rank EVERY record
+#   EXCEPT status == "duplicate". Unlike generate_todo_md there is NO status ==
+#   "new" gate — SUMMARY is the executive risk view, so a high-risk
+#   needs-validation (or even likely-false-positive) finding still surfaces; the
+#   risk formula de-weights low-confidence items naturally. The ONLY status that
+#   must be filtered is `duplicate`: a non-canonical copy carries the same
+#   severity/confidence as its canonical and would double-count a single real
+#   issue, wasting a slot in the Top-20. This matches every sibling's treatment
+#   of `status == "duplicate"`.
+#
+#   ORDERING / CAP: risk desc, then severity rank desc (so a high@0.5=1.0 beats a
+#   medium@1.0=1.0 — severity wins on a tie), then confidence desc, then id
+#   ascending as a stable tiebreak so output is byte-identical across runs (no
+#   timestamps). Take the top 20 (`.[0:20]`); fewer than 20 eligible findings
+#   emit exactly that many.
+#
+#   RENDERING is defensive (mirrors the siblings): null/empty type or
+#   primary_location renders as an em dash, never the literal "null"; a
+#   null/empty markdown_path emits NO link (never a broken "[...]()"). Fields are
+#   emitted verbatim by jq, so a title containing backticks / $() / pipes is
+#   data, never shell-evaluated; the list layout (not a Markdown table) means a
+#   literal "|" cannot break a row.
+#
+#   EMPTY / MISSING INPUT: a missing or unreadable input path returns 2 and
+#   writes nothing (no crash). A present-but-empty or all-excluded registry
+#   writes a valid file with a "no findings" note and returns 0.
+#
+#   Pure apart from the documented write of <out_file> (atomic tmp+mv). Returns
+#   0 on success, 2 on bad/unreadable input, 1 on a render/IO failure.
+generate_summary_md() {
+  local findings_jsonl="${1:-}" out_file="${2:-}"
+
+  # Bad args or an unreadable/missing input -> rc 2, nothing written, no crash.
+  [[ -n "$findings_jsonl" && -n "$out_file" ]] || return 2
+  [[ -f "$findings_jsonl" && -r "$findings_jsonl" ]] || return 2
+
+  local out_dir
+  out_dir="$(dirname -- "$out_file")"
+  mkdir -p -- "$out_dir" 2>/dev/null || return 1
+
+  local tmp
+  tmp="$(mktemp "$out_dir/.summary.XXXXXX")" || return 1
+
+  if jq -rs --arg ph "—" '
+       # Score rank clamps invalid severity to 0 (mirrors finding_risk_score,
+       # never negative); tiebreak rank uses -1 so unknown severity sorts last.
+       def rank0: {critical:3, high:2, medium:1, low:0}[(.severity // "")] // 0;
+       def rankt: {critical:3, high:2, medium:1, low:0}[(.severity // "")] // -1;
+       def conf: (if (.confidence | type) == "number" then .confidence else 0.5 end);
+       def disp(v): (if (v == null or v == "") then $ph else (v | tostring) end);
+
+       ( map(select(.status != "duplicate"))
+         | map(. + {_risk: (rank0 * conf), _rankt: rankt, _conf: conf})
+         | sort_by([(._risk * -1), (._rankt * -1), (._conf * -1), (.id // "")])
+         | .[0:20]
+         | to_entries
+         | map(
+             "## " + ((.key + 1) | tostring) + ". ["
+               + ((.value.severity // "") | ascii_upcase) + "] "
+               + (.value.title // "(untitled)") + "\n"
+             + "- **Severity:** " + disp(.value.severity) + "\n"
+             + "- **Type:** " + disp(.value.type) + "\n"
+             + "- **Location:** " + disp(.value.primary_location) + "\n"
+             + (if (.value.markdown_path == null or .value.markdown_path == "")
+                then ""
+                else "- **Details:** [" + (.value.markdown_path | tostring)
+                       + "](" + (.value.markdown_path | tostring) + ")\n"
+                end)
+           )
+       ) as $entries
+       | "# SUMMARY — Top 20 Findings by Risk\n\n"
+         + "Executive view: the highest-risk findings across this run, ranked by "
+         + "risk = severity rank x confidence (descending; critical=3, high=2, "
+         + "medium=1, low=0). Duplicate findings are excluded so a canonical is "
+         + "never double-counted. Most-risky first.\n\n"
+         + (if ($entries | length) == 0
+            then "_No findings to summarize._\n"
+            else ($entries | join("\n"))
+            end)
+     ' "$findings_jsonl" >"$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$out_file"
+    return 0
+  fi
+
+  rm -f -- "$tmp"
+  return 1
+}
+
 # generate_needs_review_md <findings_jsonl> <out_file>
 #   Renders the "a human (or an external scanner) must look at this" list to
 #   <out_file> as Markdown, one entry per UNCERTAIN finding showing severity,
