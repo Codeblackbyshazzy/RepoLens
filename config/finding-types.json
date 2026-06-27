@@ -1,0 +1,34 @@
+{
+  "types": [
+    {
+      "id": "security-vulnerability",
+      "name": "Security Vulnerability",
+      "description": "An exploitable weakness that lets an attacker breach confidentiality, integrity, or availability (e.g. injection, broken auth, secret exposure)."
+    },
+    {
+      "id": "reliability-bug",
+      "name": "Reliability Bug",
+      "description": "A state or correctness defect that makes the system produce wrong results, crash, or behave non-deterministically under normal use."
+    },
+    {
+      "id": "performance-risk",
+      "name": "Performance Risk",
+      "description": "A latency, resource, or scaling concern (e.g. N+1 queries, unbounded growth, hot-path inefficiency) that degrades behavior as load or data grows."
+    },
+    {
+      "id": "maintainability",
+      "name": "Maintainability",
+      "description": "A code-health or changeability concern (e.g. duplication, dead code, tangled coupling) that raises the cost of future changes without being a runtime defect."
+    },
+    {
+      "id": "test-gap",
+      "name": "Test Gap",
+      "description": "Missing or insufficient test coverage for behavior that should be verified, leaving regressions undetected."
+    },
+    {
+      "id": "external-dependency",
+      "name": "External Dependency",
+      "description": "A risk originating in a third-party dependency (e.g. a CVE in a pinned package); pairs with the 'needs scanner validation' classification and should be confirmed by a dependency scanner rather than treated as proven."
+    }
+  ]
+}
