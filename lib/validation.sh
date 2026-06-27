@@ -34,9 +34,18 @@
 # SLOT stores; wiring it into the ledger builders is a separate slice and is
 # out of scope here.
 #
+# This module also provides `classify_validation_status` (issue #334), the pure
+# rule that maps a structured `validation` object onto a registry `status`
+# (`new` / `needs-validation` / `likely-false-positive`) from two axes — anchor
+# strength and the command class of `suggested_validation` (locally-runnable
+# check vs external scanner). See the comment block above that function for the
+# exact precedence.
+#
 # Pure: each function works from its arguments / stdin plus jq alone, depends on
 # no globals, and is safe to source under `set -uo pipefail`. This module is
-# sourceable; it defines functions only and has no top-level side effects.
+# sourceable; it defines functions plus two named constant command-class lists
+# (used by the classifier) and has no top-level runtime side effects — no
+# output, no file writes.
 
 # _validation_ltrim <string>
 #   Prints the string with leading whitespace removed. Pure string transform
@@ -185,4 +194,163 @@ parse_validation_block() {
       proof_anchors: $proof_anchors,
       suggested_validation: $suggested_validation
     }'
+}
+
+# ---------------------------------------------------------------------------
+# Validation `status` classifier (issue #334)
+# ---------------------------------------------------------------------------
+
+# VALIDATION_LOCAL_CMDS
+#   Allowlist of command tokens that mark a `suggested_validation` as a LOCAL,
+#   self-contained check the audit host can run without any external service.
+#   Matched against the command's FIRST token only (case-insensitive). One named
+#   array so adding a tool is a one-line edit (AC). `curl` is intentionally NOT
+#   listed here — it is local only against localhost / 127.0.0.1 and is handled
+#   as a special case in `_validation_command_class`.
+VALIDATION_LOCAL_CMDS=(
+  grep rg test '[' bash sh cat ls find jq head tail wc diff awk sed
+)
+
+# VALIDATION_SCANNER_KEYWORDS
+#   Denylist of external-scanner signals. Matched as a SUBSTRING anywhere in the
+#   command (case-insensitive) so both bare tool names (`semgrep ...`) and the
+#   prose form (`needs external scanner — npm audit`) are caught. The literal
+#   phrase `external scanner` is included so this classifier is a SUPERSET of the
+#   existing repo convention (artifacts.sh / human_review.sh / audit.md) and the
+#   three consumers cannot drift. One named array so adding a scanner is a
+#   one-line edit (AC).
+VALIDATION_SCANNER_KEYWORDS=(
+  'external scanner'
+  semgrep trivy snyk bandit gitleaks trufflehog
+  'npm audit' 'yarn audit' 'pnpm audit'
+  'pip-audit' 'pip audit'
+  'cargo audit'
+  osv-scanner grype checkov tfsec dependency-check
+)
+
+# _validation_command_class <command-string>
+#   Classifies a `suggested_validation` command string into exactly one of:
+#     local   — first token is in VALIDATION_LOCAL_CMDS (or a curl against
+#               localhost / 127.0.0.1).
+#     scanner — references an external scanner (a VALIDATION_SCANNER_KEYWORDS
+#               substring).
+#     none    — empty / whitespace-only command (nothing to run).
+#     unknown — a non-empty command that is neither local nor a known scanner.
+#   The allowlist (first-token) is evaluated BEFORE the scanner denylist
+#   (substring), so a genuinely local command that merely mentions a scanner name
+#   as an argument — `grep -rn "semgrep" .` — classifies as `local`, not
+#   `scanner`. The command string is treated purely as data (string ops only);
+#   it is never evaluated by the shell. Side effect: writes the class to stdout.
+#
+#   Known limitation (accepted, per issue): classification keys off the first
+#   token, so a wrapper like `bash -c 'semgrep ...'` classifies as `local`. Deep
+#   argument parsing is out of scope and brittle.
+_validation_command_class() {
+  local cmd first lower tok kw
+  cmd="$(_validation_trim "$1")"
+  if [[ -z "$cmd" ]]; then
+    printf 'none'
+    return 0
+  fi
+
+  lower="${cmd,,}"
+  first="${cmd%%[[:space:]]*}"
+  first="${first,,}"
+
+  if [[ "$first" == "curl" ]]; then
+    # curl is a LOCAL check only when it targets the loopback host; a remote
+    # fetch is not locally validatable and falls through to the scanner/unknown
+    # determination below.
+    if [[ "$lower" == *localhost* || "$lower" == *127.0.0.1* ]]; then
+      printf 'local'
+      return 0
+    fi
+  else
+    for tok in "${VALIDATION_LOCAL_CMDS[@]}"; do
+      # RHS quoted -> literal compare (so `[` is not read as a glob bracket).
+      if [[ "$first" == "${tok,,}" ]]; then
+        printf 'local'
+        return 0
+      fi
+    done
+  fi
+
+  for kw in "${VALIDATION_SCANNER_KEYWORDS[@]}"; do
+    if [[ "$lower" == *"${kw,,}"* ]]; then
+      printf 'scanner'
+      return 0
+    fi
+  done
+
+  printf 'unknown'
+}
+
+# classify_validation_status <validation_json>
+#   Pure rule that maps a structured `validation` object (the 6-key object
+#   `parse_validation_block` emits — this function reads only two of its keys)
+#   onto a registry `status`. Prints EXACTLY ONE of `new`, `needs-validation`,
+#   or `likely-false-positive` on stdout. It NEVER emits `duplicate` (owned by
+#   the dedup slice) and never writes `findings.jsonl` (owned by the ledger
+#   slice) — it just returns the string for the ledger to store.
+#
+#   Two axes drive the decision:
+#     anchors — `proof_anchors` array length >= 1 is "solid". A missing, null,
+#               or non-array `proof_anchors` (e.g. a legacy singular string) is
+#               defensively treated as 0 anchors so a stray scalar cannot pass
+#               as solid evidence.
+#     class   — the command class of `suggested_validation` (see
+#               `_validation_command_class`): local / scanner / none / unknown.
+#
+#   Precedence — FIRST match wins:
+#     1. class == scanner                     -> needs-validation
+#        (external scanner required; aligns with the `external-dependency` type.
+#        This dominates anchor strength: a scanner-gated finding is parked, not
+#        discarded, regardless of anchors.)
+#     2. solid anchors AND class == local     -> new
+#        (locally validatable — issue rule 1.)
+#     3. solid anchors AND class in {none,unknown} -> needs-validation
+#        (real evidence but no runnable local check — park for validation.)
+#     4. NO anchors AND class == local        -> needs-validation
+#        (a cheap local check exists, so park rather than discard; research §6
+#        recommendation 4a.)
+#     5. NO anchors AND class in {none,unknown} -> likely-false-positive
+#        (unsubstantiated and nothing to run — the conservative default.)
+#   Corollary (issue rule 1): a finding with NO anchors NEVER classifies `new`.
+#
+#   Pure / jq-driven: the JSON is read with jq alone (so quotes, `$(...)`,
+#   backticks, backslashes in the command string are data, never evaluated), and
+#   the function has no side effects. Side effect: writes one status to stdout.
+classify_validation_status() {
+  local validation_json="${1:-}" anchors cmd cls status
+
+  # Anchor strength. Anything that is not a JSON array counts as 0 anchors.
+  anchors="$(jq -r \
+    'if (.proof_anchors | type) == "array" then (.proof_anchors | length) else 0 end' \
+    <<<"$validation_json" 2>/dev/null)"
+  [[ "$anchors" =~ ^[0-9]+$ ]] || anchors=0
+
+  # Command string (only honoured when it is a JSON string; null/missing -> "").
+  cmd="$(jq -r \
+    'if (.suggested_validation | type) == "string" then .suggested_validation else "" end' \
+    <<<"$validation_json" 2>/dev/null)"
+
+  cls="$(_validation_command_class "$cmd")"
+
+  if [[ "$cls" == "scanner" ]]; then
+    status="needs-validation"
+  elif [[ "$anchors" -ge 1 ]]; then
+    if [[ "$cls" == "local" ]]; then
+      status="new"
+    else
+      status="needs-validation"
+    fi
+  else
+    if [[ "$cls" == "local" ]]; then
+      status="needs-validation"
+    else
+      status="likely-false-positive"
+    fi
+  fi
+
+  printf '%s\n' "$status"
 }
