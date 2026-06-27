@@ -193,3 +193,129 @@ human_review_bucketize() {
 
   return 0
 }
+
+# _human_review_repo_root
+#   Prints the repo root (the parent of lib/). Mirrors the sibling finalize
+#   helpers (_synthesize_repo_root / _verify_repo_root). Pure; prints one path.
+_human_review_repo_root() {
+  local source_dir
+  source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || source_dir="."
+  (cd -- "$source_dir/.." 2>/dev/null && pwd) || printf '%s' "$source_dir/.."
+}
+
+# _human_review_log_base <run_id>
+#   Returns the run log base directory. Honors the global LOG_BASE when set (so
+#   the orchestrator and tests can redirect output) and otherwise falls back to
+#   <repo_root>/logs/<run_id>. Mirrors _synthesize_log_base / _verify_log_base so
+#   the finalize call and the test drive the renderer the same way. Pure; prints
+#   one path.
+_human_review_log_base() {
+  local run_id="${1:-}"
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    printf '%s' "$LOG_BASE"
+    return 0
+  fi
+  printf '%s/logs/%s' "$(_human_review_repo_root)" "$run_id"
+}
+
+# render_human_review_digest <run_id>
+#   Renders the human-facing curated digest at logs/<run-id>/final/HUMAN_REVIEW.md
+#   from the bucketed finding registry (final/findings.jsonl). This is the
+#   CONSUMER of human_review_bucketize: it slices each bucket to its visible cap
+#   and emits a single prioritized Markdown page in a fixed section order —
+#   header (run id + totals), Top Critical/High, Top Medium Security,
+#   Test & Quality (own section), Not actionable without a scanner (own section),
+#   and a placeholder/anchor for the themed remainder (a separate issue fills the
+#   remainder grouping in). It RENDERS only — it never builds or mutates the
+#   registry and invokes no model.
+#
+#   PATH RESOLUTION: honors $LOG_BASE when set (the live finalize call exports it;
+#   tests set it to a temp dir), else <repo_root>/logs/<run_id>. So the test drives
+#   the function by just setting LOG_BASE and dropping a fixture findings.jsonl.
+#
+#   ATOMIC WRITE: builds the document into <out>.tmp.$$ and `mv -f`s it into place
+#   on success (the promote pattern from lib/synthesize.sh / lib/triage.sh). On a
+#   render/IO failure the tmp file is removed and the function returns 1, leaving
+#   NO partial HUMAN_REVIEW.md behind.
+#
+#   DEFENSIVE RENDER: a null/empty severity/domain/lens/primary_location renders
+#   as an em dash via disp(), never the literal "null"; a null/empty markdown_path
+#   emits NO link (never a broken "[]()"). Every field is emitted verbatim by jq,
+#   so a title containing backticks / $(...) / pipes is data, never shell-evaluated
+#   and never breaks a row (bullet-list layout, not a Markdown table).
+#
+#   EMPTY REGISTRY: an empty / missing findings.jsonl feeds all-empty buckets
+#   (human_review_bucketize is total), so the digest renders a valid "nothing to
+#   review" page (header + every section header with an empty-state note) and
+#   returns 0.
+#
+#   Returns 0 on success (file written), 1 on a render/IO failure.
+render_human_review_digest() {
+  local run_id="${1:-}"
+  local base final_dir findings out tmp
+
+  base="$(_human_review_log_base "$run_id")"
+  final_dir="$base/final"
+  findings="$final_dir/findings.jsonl"
+  out="$final_dir/HUMAN_REVIEW.md"
+
+  mkdir -p -- "$final_dir" 2>/dev/null || return 1
+  tmp="$out.tmp.$$"
+
+  # Bucketize is a total function (always rc 0, always one valid JSON object),
+  # so the pipeline's exit status is determined solely by the jq renderer.
+  if human_review_bucketize "$findings" \
+    | jq -r --arg run_id "$run_id" --arg ph "—" '
+        def disp(v): (if (v == null or v == "") then $ph else (v | tostring) end);
+
+        # One finding -> a bullet-list block. Severity drives the heading; the
+        # Where line carries domain/lens + primary_location; Details links to the
+        # markdown_path only when present.
+        def entry(f):
+          "### [" + (((f.severity // "") | tostring | ascii_upcase)
+                     | (if . == "" then $ph else . end)) + "] "
+            + (f.title // "(untitled)" | tostring) + "\n"
+          + "- **Where:** " + disp(f.domain) + "/" + disp(f.lens)
+            + " — `" + disp(f.primary_location) + "`\n"
+          + (if (f.markdown_path == null or f.markdown_path == "") then ""
+             else "- **Details:** [" + (f.markdown_path | tostring)
+                    + "](" + (f.markdown_path | tostring) + ")\n"
+             end);
+
+        # A capped bucket -> a "## <title>" section. The visible slice is
+        # items[:cap] (cap null => all items); count and full items are not
+        # truncated by the bucketizer, so an empty slice yields the empty-state.
+        def section($bucket; $title):
+          ($bucket.items[0:($bucket.cap // ($bucket.items | length))]) as $shown
+          | "## " + $title + " (" + ($bucket.count | tostring) + ")\n\n"
+            + (if ($shown | length) == 0
+               then "_Nothing to review in this section._\n"
+               else ([ $shown[] | entry(.) ] | join("\n"))
+               end);
+
+        ( [ .top_critical_high.count, .top_medium_security.count, .test_quality.count,
+            .not_actionable_without_scanner.count, .remainder.count ] | add ) as $total
+        | "# Human Review — " + $run_id + "\n\n"
+          + "Curated, prioritized digest of the finding registry — "
+          + ($total | tostring) + " finding(s) across 5 buckets.\n\n"
+          + (if $total == 0 then "_No findings to review._\n\n" else "" end)
+          + section(.top_critical_high; "Top Critical / High") + "\n"
+          + section(.top_medium_security; "Top Medium Security") + "\n"
+          + section(.test_quality; "Test & Quality") + "\n"
+          + section(.not_actionable_without_scanner; "Not Actionable Without a Scanner") + "\n"
+          + "## Remainder (" + (.remainder.count | tostring) + ")\n\n"
+          + "<a id=\"remainder\"></a>\n\n"
+          + (if .remainder.count == 0
+             then "_No further findings._\n"
+             else "_" + (.remainder.count | tostring)
+                    + " additional finding(s) — themed grouping pending._\n"
+             end)
+      ' >"$tmp" 2>/dev/null; then
+    if mv -f -- "$tmp" "$out" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  rm -f -- "$tmp"
+  return 1
+}

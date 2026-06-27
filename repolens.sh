@@ -3622,6 +3622,21 @@ if declare -p _FORGE_WARN_SEEN >/dev/null 2>&1 && (( ${#_FORGE_WARN_SEEN[@]} > 0
 fi
 
 finalize_summary "$SUMMARY_FILE"
+
+# --- Human review digest (non-fatal) ---
+# When --human-review is set and the finding registry exists, render the curated
+# final/HUMAN_REVIEW.md from the bucketed findings. Non-fatal, matching the
+# verifier precedent: a render failure logs a warning and NEVER touches
+# REPOLENS_FINAL_STATE or RUN_ROUNDS_RC. No HUMAN_REVIEW.md is written when the
+# flag is off or no findings.jsonl exists.
+if [[ "${HUMAN_REVIEW:-false}" == "true" && -f "$LOG_BASE/final/findings.jsonl" ]]; then
+  if render_human_review_digest "$RUN_ID"; then
+    log_info "Human review: HUMAN_REVIEW.md written"
+  else
+    log_warn "Human review: failed to render HUMAN_REVIEW.md"
+  fi
+fi
+
 apply_rate_limit_abort_final_state || true
 set_summary_health "$SUMMARY_FILE" "$REPOLENS_DEGENERATE_THRESHOLD"
 RUN_HEALTH="$(jq -r '.health // "ok"' "$SUMMARY_FILE" 2>/dev/null || printf 'ok')"
