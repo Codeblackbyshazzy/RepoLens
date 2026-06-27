@@ -3138,8 +3138,9 @@ run_lens() {
   local rate_limit_retry_attempted=false
   local rate_limit_sleep_seconds=0
   local no_progress_count=0
-  local lens_start_epoch
+  local lens_start_epoch lens_start_iso
   lens_start_epoch="$(date +%s)"
+  lens_start_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   while true; do
     local now_epoch elapsed_seconds remaining_wall_secs
@@ -3387,7 +3388,16 @@ run_lens() {
 
   # Record result. Terminal agent guard lenses are recorded but NOT marked completed,
   # so --resume will re-run them on the next invocation.
-  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds"
+  # Capture end-of-lens timing for summary.json analysis. duration is wall-clock
+  # for the whole lens loop (including any rate-limit sleeps); clamp negatives in
+  # case the clock stepped backward (NTP) mid-lens, mirroring the lens_issues clamp.
+  local lens_end_epoch lens_end_iso lens_duration_seconds
+  lens_end_epoch="$(date +%s)"
+  lens_end_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  lens_duration_seconds=$((lens_end_epoch - lens_start_epoch))
+  (( lens_duration_seconds < 0 )) && lens_duration_seconds=0
+  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds" \
+    "$lens_start_iso" "$lens_end_iso" "$lens_duration_seconds"
   if [[ "$exit_status" != "rate-limited" && "$exit_status" != "agent-no-progress" \
       && "$exit_status" != "auth-expired" && "$exit_status" != "model-unavailable" \
       && "$exit_status" != "budget-exhausted" && "$exit_status" != "agent-refused" \

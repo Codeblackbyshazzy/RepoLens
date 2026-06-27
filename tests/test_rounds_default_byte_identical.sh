@@ -160,12 +160,15 @@ summary_path_for_run() {
 }
 
 # Strip volatile fields (run_id, project path, timestamps) so two summaries
-# from independent runs of the same configuration can be compared.
+# from independent runs of the same configuration can be compared. Per-lens
+# started_at/completed_at/duration_seconds are wall-clock values captured at run
+# time (issue #337), so they legitimately differ between two runs and must be
+# stripped alongside the top-level timestamps and per-lens rate_limit_sleep_seconds.
 sanitize_summary() {
   local file="$1"
   jq '
     del(.run_id, .project, .started_at, .completed_at, .output_dir)
-    | .lenses = (.lenses // [] | map(del(.rate_limit_sleep_seconds)))
+    | .lenses = (.lenses // [] | map(del(.rate_limit_sleep_seconds, .started_at, .completed_at, .duration_seconds)))
   ' "$file"
 }
 
@@ -219,6 +222,64 @@ if [[ "$DEFAULT_ITERATIONS" == "3" ]]; then
   pass_with "lens iterations == 3 (audit depth, not multiplied by rounds)"
 else
   fail_with "lens iterations should be 3" "got: $DEFAULT_ITERATIONS"
+fi
+
+# =====================================================================
+# Test 1b (issue #337): the end-to-end run_lens wiring populates per-lens
+# timing on the recorded lens object. tests/test_lens_timing.sh only exercises
+# record_lens directly with synthetic args — it never runs repolens.sh, so it
+# cannot prove that run_lens (repolens.sh) actually captures lens_start_iso /
+# lens_end_iso and a clamped duration and forwards all three to record_lens. A
+# regression there (wrong var name, dropped arg, swapped timestamps, broken
+# clamp) would slip past the unit test but is caught by these assertions on a
+# real run's summary.json.
+# =====================================================================
+echo ""
+echo "Test 1b: run_lens persists per-lens started_at/completed_at/duration_seconds (issue #337)"
+iso_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+
+DEFAULT_LENS_STARTED="$(jq -r '.lenses[0].started_at' "$DEFAULT_SUMMARY" 2>/dev/null || echo MISSING)"
+TOTAL=$((TOTAL + 1))
+if [[ "$DEFAULT_LENS_STARTED" =~ $iso_re ]]; then
+  pass_with "lens started_at is a populated ISO-8601 UTC timestamp ($DEFAULT_LENS_STARTED)"
+else
+  fail_with "lens started_at must be ISO-8601 UTC, not null/empty" "got: $DEFAULT_LENS_STARTED"
+fi
+
+DEFAULT_LENS_COMPLETED="$(jq -r '.lenses[0].completed_at' "$DEFAULT_SUMMARY" 2>/dev/null || echo MISSING)"
+TOTAL=$((TOTAL + 1))
+if [[ "$DEFAULT_LENS_COMPLETED" =~ $iso_re ]]; then
+  pass_with "lens completed_at is a populated ISO-8601 UTC timestamp ($DEFAULT_LENS_COMPLETED)"
+else
+  fail_with "lens completed_at must be ISO-8601 UTC, not null/empty" "got: $DEFAULT_LENS_COMPLETED"
+fi
+
+# completed_at must not precede started_at. Fixed-width ISO-8601 UTC sorts
+# lexicographically in chronological order, so a plain string compare catches a
+# swapped-timestamp regression without needing GNU `date -d` epoch math. Only
+# meaningful when both timestamps are well-formed (guarded above).
+TOTAL=$((TOTAL + 1))
+if [[ ! "$DEFAULT_LENS_STARTED" =~ $iso_re || ! "$DEFAULT_LENS_COMPLETED" =~ $iso_re ]]; then
+  fail_with "cannot check ordering — lens timestamps not well-formed" \
+    "started=$DEFAULT_LENS_STARTED completed=$DEFAULT_LENS_COMPLETED"
+elif [[ "$DEFAULT_LENS_COMPLETED" < "$DEFAULT_LENS_STARTED" ]]; then
+  fail_with "lens completed_at precedes started_at (timestamps swapped in run_lens?)" \
+    "started=$DEFAULT_LENS_STARTED completed=$DEFAULT_LENS_COMPLETED"
+else
+  pass_with "lens completed_at is at or after started_at"
+fi
+
+# duration_seconds must be a JSON number (not null, not a string), and the
+# clamp in run_lens guarantees it is non-negative.
+DEFAULT_LENS_DUR_TYPE="$(jq -r '.lenses[0].duration_seconds | type' "$DEFAULT_SUMMARY" 2>/dev/null || echo MISSING)"
+assert_eq "lens duration_seconds is a JSON number" "number" "$DEFAULT_LENS_DUR_TYPE"
+
+DEFAULT_LENS_DUR="$(jq -r '.lenses[0].duration_seconds' "$DEFAULT_SUMMARY" 2>/dev/null || echo MISSING)"
+TOTAL=$((TOTAL + 1))
+if [[ "$DEFAULT_LENS_DUR" =~ ^[0-9]+$ ]]; then
+  pass_with "lens duration_seconds is a non-negative integer ($DEFAULT_LENS_DUR)"
+else
+  fail_with "lens duration_seconds must be a non-negative integer" "got: $DEFAULT_LENS_DUR"
 fi
 
 # =====================================================================

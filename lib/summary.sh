@@ -120,23 +120,36 @@ _increment_summary_issues_created_locked() {
   return "$rc"
 }
 
-# record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues] [rate_limit_sleep_seconds]
+# record_lens <summary_file> <domain> <lens_id> <iterations> <status> \
+#             [issues] [rate_limit_sleep_seconds] \
+#             [started_at] [completed_at] [duration_seconds]
 #   Appends a lens result to the summary. The `round` field is sourced from
 #   the ambient CURRENT_ROUND_INDEX variable (set by `run_rounds` for
 #   multi-round runs), defaulting to 0 for non-rounded runs so that
 #   `(domain, lens)` no longer collides across rounds in `summary.json`.
+#   The trailing timing args are optional and additive: started_at/completed_at
+#   are ISO-8601 UTC strings (empty → JSON null), duration_seconds is a
+#   non-negative integer (non-numeric → 0). Legacy 7-arg callers keep working
+#   with timing defaulting to null/0.
 record_lens() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
   local rate_limit_sleep_seconds="${7:-0}"
+  local started_at="${8:-}"
+  local completed_at="${9:-}"
+  local duration_seconds="${10:-0}"
   with_file_lock "${file}.lock" "${REPOLENS_SUMMARY_LOCK_TIMEOUT:-30}" \
-    _record_lens_locked "$file" "$domain" "$lens_id" "$iterations" "$status" "$issues" "$rate_limit_sleep_seconds"
+    _record_lens_locked "$file" "$domain" "$lens_id" "$iterations" "$status" "$issues" "$rate_limit_sleep_seconds" \
+      "$started_at" "$completed_at" "$duration_seconds"
 }
 
 _record_lens_locked() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
   local rate_limit_sleep_seconds="${7:-0}"
+  local started_at="${8:-}"
+  local completed_at="${9:-}"
+  local duration_seconds="${10:-0}"
   local tmp
   local lenses_increment=1
   local round="${CURRENT_ROUND_INDEX:-0}"
@@ -150,10 +163,14 @@ _record_lens_locked() {
   if [[ ! "$rate_limit_sleep_seconds" =~ ^[0-9]+$ ]]; then
     rate_limit_sleep_seconds=0
   fi
+  if [[ ! "$duration_seconds" =~ ^[0-9]+$ ]]; then
+    duration_seconds=0
+  fi
   jq --arg d "$domain" --arg l "$lens_id" --argjson i "$iterations" --arg s "$status" \
      --argjson iss "$issues" --argjson rlss "$rate_limit_sleep_seconds" --argjson lr "$lenses_increment" \
      --argjson rnd "$round" \
-    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss, "round": $rnd}] |
+     --arg sa "$started_at" --arg ca "$completed_at" --argjson dur "$duration_seconds" \
+    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss, "round": $rnd, "started_at": ($sa | if . == "" then null else . end), "completed_at": ($ca | if . == "" then null else . end), "duration_seconds": $dur}] |
      .totals.lenses_run += $lr |
      .totals.iterations_total += $i |
      .totals.issues_created += $iss' "$file" > "$tmp" && mv "$tmp" "$file"
