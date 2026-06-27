@@ -16,8 +16,11 @@
 # RepoLens — evidence-ledger / finding-registry helpers.
 #
 # This module is sourceable; it defines functions only and has no top-level
-# side effects. It depends on no globals — every function works purely from
-# its arguments — so it is safe to source alone under `set -uo pipefail`.
+# side effects. Nearly every function works purely from its arguments — so it
+# is safe to source alone under `set -uo pipefail`. The sole exception is the
+# `build_finding_registry` orchestrator, which reads the optional `LOG_BASE`
+# and `OUTPUT_DIR` globals (both `${VAR:-}`-guarded) to resolve where the
+# registry lands and where to find a local `--local` md tree.
 #
 # The finding registry (`logs/<run-id>/final/findings.jsonl`, schema in
 # docs/finding-registry-schema.md) needs a STABLE `id` so the same finding
@@ -509,5 +512,160 @@ validate_findings_jsonl() {
   done < "$findings"
 
   (( errors == 0 )) || return 1
+  return 0
+}
+
+# _ledger_repo_root
+#   Prints the repository root (the parent of this file's lib/ directory).
+#   Self-contained replica of lib/synthesize.sh::_synthesize_repo_root so the
+#   log-base resolver works when lib/ledger.sh is sourced on its own. Both
+#   files live in lib/, so `dirname/..` yields the same root.
+_ledger_repo_root() {
+  local source_dir
+  source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf '%s' "$(cd "$source_dir/.." && pwd)"
+}
+
+# _ledger_log_base <run_id>
+#   Resolves the run's log base: honors the optional `LOG_BASE` global (so the
+#   orchestrator and tests can redirect output) and otherwise falls back to
+#   <repo_root>/logs/<run_id>. Prefers the shared _synthesize_log_base
+#   (lib/synthesize.sh) when it is already sourced, so the registry lands beside
+#   the synthesizer's manifest.json; otherwise uses a self-contained replica so
+#   lib/ledger.sh keeps working when sourced alone (the same defensive pattern
+#   as _ledger_normalize_title / _ledger_severity_normalize above).
+_ledger_log_base() {
+  local run_id="${1:-}"
+  if declare -F _synthesize_log_base >/dev/null 2>&1; then
+    _synthesize_log_base "$run_id"
+    return
+  fi
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    printf '%s' "$LOG_BASE"
+    return 0
+  fi
+  printf '%s/logs/%s' "$(_ledger_repo_root)" "$run_id"
+}
+
+# build_finding_registry <run_id> [local_dir]
+#   Orchestrates the four source-specific builders above into the canonical
+#   finding registry under `<log_base>/final/`: findings.jsonl (full fidelity)
+#   plus findings.csv (flat projection). This is the single producer of
+#   final/findings.jsonl — consumed by result_pointer.sh / human_review.sh /
+#   triage. It is GLUE ONLY; no new parsing logic lives here.
+#
+#   Source selection (both may run, results are concatenated):
+#   - if `<log_base>/final/manifest.json` exists, ingest it via
+#     build_findings_jsonl_from_manifest.
+#   - if a local output dir is supplied (2nd arg, else the OUTPUT_DIR global)
+#     and is a directory, ingest its `*.md` tree via
+#     build_findings_jsonl_from_local.
+#   The concatenation is then collapsed so each `id` appears once, keeping the
+#   FIRST occurrence (manifest-first tie-break — the manifest record carries the
+#   richer cross-run provenance: source_finding_paths passthrough and a
+#   cluster-seeded duplicate_group. Either order satisfies the AC, which mandates
+#   only that identical-id duplicates collapse). jq -s + reduce is single-pass
+#   and order-preserving (unique_by would sort and lose "keep first").
+#
+#   Atomicity mirrors run_synthesizer's tmp+mv discipline: the registry is
+#   assembled in a `.tmp.$$` candidate, validated via validate_findings_jsonl,
+#   and only `mv`-ed into place on success. A validation (or builder) failure
+#   discards every intermediate and promotes NOTHING — a partial/failed build
+#   never leaves a consumable findings.jsonl. The CSV is derived from the
+#   PROMOTED jsonl, so no orphan CSV survives a discarded candidate.
+#
+#   No sources -> a canonical-empty registry: a 0-line findings.jsonl and a
+#   header-only findings.csv, exit 0 (parity with the synthesizer's empty case).
+#
+#   Reads the optional LOG_BASE and OUTPUT_DIR globals (both `${VAR:-}`-guarded).
+#   Returns 2 on a missing run_id, 1 on a builder/jq/IO/validation failure.
+build_finding_registry() {
+  local run_id="${1:-}"
+  local local_dir="${2:-${OUTPUT_DIR:-}}"
+  if [[ -z "$run_id" ]]; then
+    echo "build_finding_registry: missing run_id" >&2
+    return 2
+  fi
+
+  local final_dir
+  final_dir="$(_ledger_log_base "$run_id")/final"
+  if ! mkdir -p "$final_dir"; then
+    echo "build_finding_registry: cannot create $final_dir" >&2
+    return 1
+  fi
+
+  local jsonl="$final_dir/findings.jsonl"
+  local csv="$final_dir/findings.csv"
+  local candidate="$jsonl.tmp.$$"
+  local deduped="$candidate.dedup"
+  local m_tmp="$final_dir/.fr-manifest.$$"
+  local l_tmp="$final_dir/.fr-local.$$"
+
+  # Start from an empty candidate so the no-source path falls out naturally.
+  if ! : > "$candidate"; then
+    echo "build_finding_registry: cannot write candidate $candidate" >&2
+    return 1
+  fi
+
+  # Source 1: synthesizer manifest, when present.
+  local manifest="$final_dir/manifest.json"
+  if [[ -f "$manifest" ]]; then
+    if build_findings_jsonl_from_manifest "$manifest" "$m_tmp"; then
+      cat "$m_tmp" >> "$candidate"
+    else
+      echo "build_finding_registry: manifest ingest failed" >&2
+      rm -f "$candidate" "$m_tmp" "$l_tmp"
+      return 1
+    fi
+    rm -f "$m_tmp"
+  fi
+
+  # Source 2: --local markdown tree, when a directory is supplied. A
+  # provided-but-missing dir is treated as "no local source" (forgiving).
+  if [[ -n "$local_dir" && -d "$local_dir" ]]; then
+    if build_findings_jsonl_from_local "$local_dir" "$l_tmp"; then
+      cat "$l_tmp" >> "$candidate"
+    else
+      echo "build_finding_registry: local ingest failed" >&2
+      rm -f "$candidate" "$m_tmp" "$l_tmp"
+      return 1
+    fi
+    rm -f "$l_tmp"
+  fi
+
+  # Collapse identical-id lines, keeping the first occurrence (input order
+  # preserved). Empty candidate -> empty output (0 lines).
+  if ! jq -c -s '
+        reduce .[] as $r ({seen: {}, out: []};
+          if (.seen[$r.id] // false) then .
+          else .seen[$r.id] = true | .out += [$r] end)
+        | .out[]' "$candidate" > "$deduped" 2>/dev/null; then
+    echo "build_finding_registry: dedup pass failed" >&2
+    rm -f "$candidate" "$deduped"
+    return 1
+  fi
+  if ! mv "$deduped" "$candidate"; then
+    rm -f "$candidate" "$deduped"
+    return 1
+  fi
+
+  # Validate BEFORE promoting. A failure discards the candidate and promotes
+  # nothing (no jsonl, no derived csv).
+  if ! validate_findings_jsonl "$candidate"; then
+    echo "build_finding_registry: registry failed validation, not promoting" >&2
+    rm -f "$candidate"
+    return 1
+  fi
+
+  # Atomic promote, then derive the CSV from the promoted jsonl.
+  if ! mv "$candidate" "$jsonl"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! build_findings_csv "$jsonl" "$csv"; then
+    echo "build_finding_registry: csv projection failed" >&2
+    return 1
+  fi
+
   return 0
 }
