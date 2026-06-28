@@ -148,6 +148,27 @@ You are responsible for every dollar of API spend. Know your per-token pricing.
 
 **`--rounds >= 4` requires explicit cost acknowledgement.** RepoLens refuses to launch unless you pass `--i-know-this-is-expensive` (or the equivalent `--max-cost <dollars>` + `--yes` combination). The hard-ceiling environment variable `REPOLENS_MAX_ROUNDS` (default `5`) caps `--rounds` and cannot be bypassed by `--i-know-this-is-expensive` — to exceed it, set `REPOLENS_MAX_ROUNDS` explicitly before launching.
 
+### Runtime & tuning
+
+A full fan-out — the default `audit` runs **248 audit-visible lenses**, each looping until the agent emits `DONE` three times in a row — can run for **hours to days**. Runtime scales roughly as:
+
+```
+runtime ≈ ceil(lenses ÷ max-parallel) × depth × rounds × per-iteration-latency
+```
+
+In plain terms: how many lenses are in your run, divided by how many run at once, times the iterations each lens does, times how long a single agent iteration takes. RepoLens prints an **estimated wall-clock** line at the confirmation prompt and in `--dry-run` (see [Cost](#cost--repolens-can-be-very-expensive)); when that estimate exceeds `REPOLENS_EST_WARN_HOURS` (default 24h) it prints a loud warning. While a run is live, `./repolens.sh status` shows elapsed time and an ETA (see [Run Status Snapshot](#run-status-snapshot)).
+
+**Levers to cut runtime, biggest win first:**
+
+- **Choose a faster/cheaper model — `--agent` (usually the dominant factor for a full run).** Per-iteration latency is set by the model and multiplies across every iteration of every lens, so a slow reasoning-heavy model dictates total wall-clock more than anything else. A lighter `--agent` (e.g. `codex`, or `opencode` with a fast provider) can be many times faster end-to-end than `claude` Opus. Calibrate quality on one `--focus` or `--domain` first (see [Supported Agent CLIs](#supported-agent-clis)).
+- **Run in parallel — `--parallel --max-parallel <n>`.** Runs are sequential unless you pass `--parallel`; `--max-parallel` (default 8) only takes effect together with it. Raise it to run more lenses concurrently, bounded by host CPU/RAM and your AI provider's RPM/TPM limits (see [Rate Limits](#rate-limits--automated-traffic)).
+- **Lower within-lens iterations — `--depth <n>`.** Fewer DONE-streak iterations per lens (default 3 for `audit`/`feature`/`bugfix`). `--depth 1` is the floor.
+- **Scope instead of fanning out — `--domain <domain-id>` or `--focus <lens-id>`.** Audit a single domain or a single lens rather than all 248. `--relevant-domains <csv>` covers the middle ground of a few domains.
+- **Spot-check — `--max-issues <n>`.** Stops after _n_ findings. This also forces **sequential** execution and **depth 1**, so it is the quickest path to a few results rather than a way to speed up a full parallel fan-out.
+- **Preview first — `--dry-run`.** Shows the resolved lens list plus the cost and wall-clock estimates without running any agent — the cheapest way to right-size a run before launching.
+
+The printed estimate is a rough planning number; faster/cheaper agents and tighter scoping reduce it, while real runs trend higher because lenses do not always converge in the estimated per-iteration time. Tune the estimate's inputs with `REPOLENS_EST_PER_ITER_SECS` (raise it for slow models) and `REPOLENS_EST_WARN_HOURS` (the warning threshold) — both documented under [Environment Variables](#environment-variables).
+
 ### Rate Limits & Automated Traffic
 
 > [!NOTE]
