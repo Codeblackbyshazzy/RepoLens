@@ -357,6 +357,22 @@ Environment:
                            On Ctrl-C or TERM, tracked parallel workers receive
                            SIGTERM, are polled for this grace period, then any
                            remaining workers are SIGKILL'd before cleanup returns.
+  DEDUPE_TITLE_SIM_PRIMARY Near-duplicate title-similarity bar on the Jaccard
+                           x10000 integer scale (0..10000; default 8500 = 0.85).
+                           Shared knob: gates both validate_manifest's pairwise
+                           title check (strict >) and _dedupe_is_match's primary
+                           title signal (inclusive >=). Lower = more aggressive
+                           deduping. A value > 10000 effectively disables the
+                           bar (no pair can reach it). Non-numeric/negative input
+                           falls back to the default with a warning (never
+                           crashes). Breaks the REPOLENS_ prefix on purpose, to
+                           match the shipped dedupe match helper.
+  DEDUPE_TITLE_SIM_SECONDARY
+                           Lower secondary title-similarity bar (Jaccard x10000;
+                           default 6000 = 0.60) used by _dedupe_is_match only
+                           when two records share a non-empty location. Same
+                           scale, validation, and > 10000 = disabled semantics
+                           as DEDUPE_TITLE_SIM_PRIMARY.
 EOF
 
   # Dynamic section: list modes, domains, and lenses from config

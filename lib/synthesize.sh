@@ -165,11 +165,59 @@ _synthesize_log_min_severity_info() {
 
 _synthesize_log_min_severity_warn() {
   local message="$1"
-  if declare -F log_warn >/dev/null 2>&1; then
+  # Delegate to log_warn ONLY when RepoLens logging is initialized
+  # (_REPOLENS_LOG_FILE set) — the same gate lib/forge.sh, lib/streak.sh, and the
+  # _synthesize_log_min_severity_info sibling above use. This is not just an
+  # optimization: it is a `set -u` safety gate. A bare `declare -F log_warn` is
+  # true whenever ANY log_warn is in scope, including a FOREIGN one. Under the
+  # AutoDev quality gate an exported AutoDev `log_warn` is inherited (it delegates
+  # to AutoDev's `_log`, which reads an UNEXPORTED `_AUTODEV_LOG_FILE` directly);
+  # the gate exports the functions but not that var, so under `set -u` the read
+  # aborts the CALLER mid-warn — right after the WARN reaches stderr — which
+  # empties the threshold _dedupe_resolve_sim_threshold was about to print (the
+  # empty value then resolves to 0 in the arithmetic and matches every pair).
+  # Whenever _REPOLENS_LOG_FILE is set, RepoLens's own logging.sh has been sourced
+  # and seeded all of its globals, so its log_warn is safe; otherwise the
+  # printf fallback emits the WARN to stderr and can never crash.
+  if declare -F log_warn >/dev/null 2>&1 && [[ -n "${_REPOLENS_LOG_FILE:-}" ]]; then
     log_warn "$message"
   else
     printf '[WARN] %s\n' "$message" >&2
   fi
+}
+
+# _dedupe_resolve_sim_threshold <env_var_name> <default_x10000>
+#   Echoes a Jaccard-similarity threshold on the x10000 integer scale (the same
+#   scale _synthesize_jaccard_x10000 returns). Reads the named env var:
+#     - unset            -> default (silent; preserves byte-for-byte behavior)
+#     - matches ^[0-9]+$ -> accepted, leading zeros normalized via $((10#$raw))
+#     - anything else    -> default + a single log_warn (non-numeric, negative,
+#                           or empty-after-set). Never `die`, never crash.
+#   It does NOT cap the upper bound: numeric values > 10000 are legal and mean
+#   "effectively disabled" (no pair's similarity, capped at 10000, can reach
+#   them) — e.g. the DEDUPE_TITLE_SIM_SECONDARY=99999 secondary-off sentinel.
+#   The warning routes to log/stderr only (never stdout), because callers
+#   capture this function's stdout as the threshold value. Pure, no model.
+_dedupe_resolve_sim_threshold() {
+  local env_name="$1" default="$2"
+  # Read the named env var WITHOUT the indirect-expansion-with-default form
+  # `${!env_name:-$default}`: on older bash builds that combination aborts with
+  # "unbound variable" under `set -u` when the target var is unset (the resolver
+  # then crashes, returning an empty threshold that makes every pair match). Guard
+  # existence with `declare -p` (a builtin that never trips `set -u`) and only
+  # dereference once the variable is known to be set — plain `${!env_name}` is
+  # safe for a set target on every bash version.
+  local raw="$default"
+  if declare -p "$env_name" >/dev/null 2>&1; then
+    raw="${!env_name}"
+  fi
+  if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
+    _synthesize_log_min_severity_warn \
+      "Invalid ${env_name}='${raw}'; using default ${default} (Jaccard x10000)."
+    printf '%s\n' "$default"
+    return 0
+  fi
+  printf '%s\n' "$((10#$raw))"
 }
 
 # _synthesize_filter_manifest_min_severity <manifest_path> <min_severity> [verification_path]
@@ -538,8 +586,9 @@ _synthesize_compute_duplicate_groups() {
 #
 #   The non-canonical records are intentionally NOT removed or marked (that is
 #   #335, out of scope): only location-based duplicate groups (title similarity
-#   below validate_manifest's 0.85 bar, same file) survive the downstream title
-#   gate and therefore actually carry also_reported_by[] in production.
+#   below validate_manifest's title bar — configurable, default 0.85 / 8500 via
+#   DEDUPE_TITLE_SIM_PRIMARY — same file) survive the downstream title gate and
+#   therefore actually carry also_reported_by[] in production.
 _synthesize_attach_also_reported_by() {
   local manifest="${1:-}"
   [[ -n "$manifest" && -f "$manifest" ]] || return 2
@@ -708,7 +757,8 @@ _synthesize_mark_duplicates() {
 #   Validates a synthesizer manifest. Performs:
 #     1. JSON parse and top-level-array shape check.
 #     2. Per-entry schema check on required S1 fields.
-#     3. Pairwise Jaccard title-similarity check (> 0.85 threshold).
+#     3. Pairwise Jaccard title-similarity check (strict > threshold;
+#        configurable via DEDUPE_TITLE_SIM_PRIMARY, default 8500 = 0.85).
 #     4. Cross-link gate: when CROSS_LINK_MODE=off (env), every entry's
 #        cross_link_actions[] MUST be empty.
 #   Reports every failure to stderr. Returns 0 on success, non-zero on any
@@ -870,13 +920,19 @@ validate_manifest() {
     ngram_lists+=("$(_synthesize_title_ngrams "$normalized")")
   done
 
+  # Resolve the primary title-similarity bar ONCE, before the O(n^2) loop, so an
+  # invalid override warns at most once (not per pair). Shared with
+  # _dedupe_is_match via DEDUPE_TITLE_SIM_PRIMARY (#353).
+  local dedupe_title_threshold
+  dedupe_title_threshold="$(_dedupe_resolve_sim_threshold DEDUPE_TITLE_SIM_PRIMARY 8500)"
+
   for (( i = 0; i < n; i++ )); do
     for (( j = i + 1; j < n; j++ )); do
       if [[ -z "${normalized_titles[i]}" && -z "${normalized_titles[j]}" ]]; then
         continue
       fi
       sim="$(_synthesize_jaccard_x10000 "${ngram_lists[i]}" "${ngram_lists[j]}")"
-      if (( sim > 8500 )); then
+      if (( sim > dedupe_title_threshold )); then
         echo "validate_manifest: near-duplicate titles (similarity ${sim}/10000):" >&2
         echo "  [${i}] ${titles[i]}" >&2
         echo "  [${j}] ${titles[j]}" >&2

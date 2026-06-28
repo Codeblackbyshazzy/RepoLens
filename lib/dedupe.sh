@@ -187,9 +187,12 @@ _dedupe_location_key() {
 #   _synthesize_jaccard_x10000); location uses _dedupe_location_key above.
 #
 #   Thresholds are module-level defaults, env-overridable (so #353 tuning and
-#   tests can pin them without code changes), expressed as Jaccard x10000:
+#   tests can pin them without code changes), expressed as Jaccard x10000 and
+#   resolved through _dedupe_resolve_sim_threshold (#353): non-numeric/negative
+#   overrides fall back to the default with a log_warn (never crash); numeric
+#   values > 10000 pass through as "effectively disabled" sentinels.
 #     DEDUPE_TITLE_SIM_PRIMARY    default 8500 (0.85) — aligns with the existing
-#                                 validate_manifest title bar.
+#                                 validate_manifest title bar (shared knob).
 #     DEDUPE_TITLE_SIM_SECONDARY  default 6000 (0.60) — lower bar that only
 #                                 applies once location agrees.
 #   Comparison is inclusive (>=), per the issue.
@@ -199,8 +202,14 @@ _dedupe_location_key() {
 #   would collapse at the lower threshold. Pure: no side effects, no model.
 _dedupe_is_match() {
   local rec_a="${1:-}" rec_b="${2:-}"
-  local primary="${DEDUPE_TITLE_SIM_PRIMARY:-8500}"
-  local secondary="${DEDUPE_TITLE_SIM_SECONDARY:-6000}"
+  # Resolve thresholds through the shared validated resolver (#353): non-numeric
+  # / negative overrides fall back to the default with a log_warn instead of
+  # reaching the arithmetic raw (which would abort under `set -u` or, for a
+  # negative value, match every pair). Numeric values > 10000 pass through as
+  # "disable" sentinels — the resolver never caps the upper bound.
+  local primary secondary
+  primary="$(_dedupe_resolve_sim_threshold DEDUPE_TITLE_SIM_PRIMARY 8500)"
+  secondary="$(_dedupe_resolve_sim_threshold DEDUPE_TITLE_SIM_SECONDARY 6000)"
 
   local title_a title_b
   title_a="$(jq -r 'if type == "object" then (.title // "") else "" end' \
