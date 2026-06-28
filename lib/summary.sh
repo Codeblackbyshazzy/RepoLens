@@ -370,3 +370,48 @@ summary_time_breakdown() {
     | [ .domain, .total ] | @tsv
   ' "$file" 2>/dev/null)
 }
+
+# estimate_run_wall_seconds <lens_count> <depth> <rounds> <max_parallel> [per_iter_secs]
+#   Pure planning estimate (integer seconds) for a full fan-out. NO I/O, no model
+#   calls — arithmetic only. Prints exactly one integer on stdout; the caller (a
+#   follow-up issue) formats human text. Read-only; no side effects.
+#
+#   Model: ceil(lens_count / max_parallel) * depth * rounds * per_iter_secs
+#   per_iter_secs defaults to 90s (a deliberately conservative single-iteration
+#   wall-clock guess: cold agent start + repo read + one analysis pass). Override
+#   precedence: explicit 5th arg > REPOLENS_EST_PER_ITER_SECS env > 90. Rough
+#   planning number, not a guarantee — real runs trend higher (non-convergence).
+#
+#   Guards: max_parallel < 1 (incl. 0/empty) is treated as 1 (no divide-by-zero);
+#   non-numeric/negative inputs fall back to safe defaults; zero-padded operands
+#   ("08") are parsed base-10 so they never crash as invalid octal. lens_count is
+#   intentionally NOT clamped to 1 — a genuine 0-lens run is ~0 seconds.
+estimate_run_wall_seconds() {
+  local lenses="${1:-0}" depth="${2:-1}" rounds="${3:-1}" max_parallel="${4:-1}"
+  local per_iter="${5:-}"
+
+  # per_iter precedence: explicit arg > env > default(90). ${VAR:-default} keeps
+  # the env read set -u-safe even when REPOLENS_EST_PER_ITER_SECS is unset.
+  if [[ ! "$per_iter" =~ ^[0-9]+$ ]]; then
+    per_iter="${REPOLENS_EST_PER_ITER_SECS:-90}"
+  fi
+  [[ "$per_iter" =~ ^[0-9]+$ ]] || per_iter=90
+
+  # Non-numeric (incl. empty and negatives — a leading '-' fails ^[0-9]+$) falls
+  # back to a safe default before any arithmetic touches the value.
+  [[ "$lenses"       =~ ^[0-9]+$ ]] || lenses=0
+  [[ "$depth"        =~ ^[0-9]+$ ]] || depth=1
+  [[ "$rounds"       =~ ^[0-9]+$ ]] || rounds=1
+  [[ "$max_parallel" =~ ^[0-9]+$ ]] || max_parallel=1
+
+  # Force base-10 FIRST so zero-padded operands ("08"/"09") never abort $(( )) as
+  # invalid octal. Clamp the multipliers to >=1 AFTER normalization (octal-safe);
+  # this also collapses max_parallel=0 into the divide-by-zero guard.
+  local n=$((10#$lenses)) d=$((10#$depth)) r=$((10#$rounds)) p=$((10#$max_parallel)) s=$((10#$per_iter))
+  (( d >= 1 )) || d=1
+  (( r >= 1 )) || r=1
+  (( p >= 1 )) || p=1
+
+  local waves=$(( (n + p - 1) / p ))   # integer ceil, valid for n>=0, p>=1
+  printf '%d\n' $(( waves * d * r * s ))
+}
