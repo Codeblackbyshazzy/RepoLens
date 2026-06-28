@@ -170,7 +170,11 @@ Options:
                           Only effective in --mode bugreport. Env var fallback:
                           REPOLENS_SCOPE_BY_KEYWORDS=1.
   --parallel              Run lenses in parallel (one agent process per lens)
-  --max-parallel <n>      Max concurrent agents in parallel mode (default: 8)
+  --max-parallel <n>      Max concurrent agents in parallel mode. When unset the
+                          default is nproc-aware: clamp(detected cores, 8, 32).
+                          An explicit value is always authoritative and is never
+                          re-clamped. Higher concurrency trips provider rate
+                          limits faster. See REPOLENS_NPROC to pin the count.
   --resume <run-id>       Resume a previous interrupted run
   --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield)
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
@@ -327,6 +331,13 @@ Environment:
                            with the remaining children. Should be >=
                            the lens wall budget plus a buffer for rate-limit
                            sleep and non-agent I/O.
+  REPOLENS_NPROC           Override the detected CPU core count used to derive
+                           the nproc-aware --max-parallel default. When
+                           --max-parallel is unset, the default is
+                           clamp(REPOLENS_NPROC, 8, 32), parsed base-10. An
+                           explicit --max-parallel always wins. Primarily a
+                           determinism knob for tests; a non-numeric value falls
+                           back to nproc(1)/getconf, then a floor of 8.
   DONE_STREAK_REQUIRED     DEPRECATED alias for --depth. Used only when --depth
                            is unset; must be between 1 and 19.
   REPOLENS_ROUNDS          Fallback for --rounds when the CLI flag is unset.
@@ -518,6 +529,7 @@ SCOPE_BY_KEYWORDS=false
 SCOPE_BY_KEYWORDS_SET=false
 PARALLEL=false
 MAX_PARALLEL=8
+MAX_PARALLEL_SET=false
 RESUME_RUN_ID=""
 SPEC_FILE=""
 MAX_ISSUES=""
@@ -609,6 +621,7 @@ while [[ $# -gt 0 ]]; do
     --max-parallel)
       [[ $# -ge 2 ]] || die "Option --max-parallel requires an argument."
       MAX_PARALLEL="$2"
+      MAX_PARALLEL_SET=true
       shift 2
       ;;
     --resume)
@@ -1713,6 +1726,24 @@ export REPOLENS_MIN_SEVERITY
 # --- Validate max-cost ---
 if [[ -n "$MAX_COST" ]]; then
   [[ "$MAX_COST" =~ ^[0-9]+\.?[0-9]*$ ]] || die "--max-cost must be a numeric value, got: $MAX_COST"
+fi
+
+# --- Resolve max-parallel (issue #367) ---
+# An explicit --max-parallel is always authoritative: it is validated as a
+# positive integer but never re-clamped, so a user may deliberately run below
+# the auto-default floor or above its cap. When the flag is unset, the default
+# becomes nproc-aware: clamp(detect_nproc(), FLOOR=8, CAP=32). FLOOR=8 keeps
+# today's static default as a floor (no small-host regression); CAP=32 bounds
+# host-RAM blow-up and provider rate-limit exposure. detect_nproc honors the
+# REPOLENS_NPROC env override (parsed before the clamp) for deterministic tests.
+# Resolved here, upstream of every consumer (print_wall_estimate, init_parallel,
+# the status snapshot), so they all observe the same value — even in sequential
+# runs, where the wall-clock preview still divides by MAX_PARALLEL.
+if $MAX_PARALLEL_SET; then
+  [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]] \
+    || die "--max-parallel must be a positive integer, got: $MAX_PARALLEL"
+else
+  MAX_PARALLEL="$(repolens_auto_max_parallel "$(detect_nproc)")"
 fi
 
 # --- Derive DONE streak threshold ---

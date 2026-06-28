@@ -33,6 +33,47 @@ _REPOLENS_MAX_PARALLEL=8
 _REPOLENS_CLEANUP_IN_PROGRESS=0
 _REPOLENS_CLEANUP_FORCE_KILL=0
 
+# detect_nproc
+#   Prints the host CPU core count as a base-10 positive integer. Resolution
+#   order, set -u-safe at every step (a non-numeric value falls through):
+#     1. REPOLENS_NPROC env override — deterministic pin for tests, parsed
+#        before the clamp so suites can assert floor/mid/cap behavior.
+#     2. nproc(1) when available.
+#     3. getconf _NPROCESSORS_ONLN — minimal containers without nproc(1).
+#     4. last-resort floor of 8.
+#   Pure: no side effects beyond reading REPOLENS_NPROC and shelling out to
+#   nproc/getconf. Output is always a clean base-10 integer.
+detect_nproc() {
+  local n="${REPOLENS_NPROC:-}"
+  if [[ "$n" =~ ^[0-9]+$ ]]; then
+    printf '%d\n' "$((10#$n))"
+    return 0
+  fi
+  n=""
+  if command -v nproc >/dev/null 2>&1; then
+    n="$(nproc 2>/dev/null || true)"
+  fi
+  [[ "$n" =~ ^[0-9]+$ ]] || n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=8
+  printf '%d\n' "$((10#$n))"
+}
+
+# repolens_auto_max_parallel <detected_cores>
+#   Pure clamp of a detected core count into the auto-default concurrency band:
+#     clamp(cores, FLOOR=8, CAP=32)
+#   FLOOR=8 equals today's static default, so small/CI hosts never regress;
+#   CAP=32 bounds host-RAM blow-up and provider rate-limit exposure. Empty,
+#   zero, and non-numeric inputs collapse to the floor. Parsed base-10 so a
+#   zero-padded value ("08") is not read as octal.
+repolens_auto_max_parallel() {
+  local cores="${1:-}" floor=8 cap=32 n
+  [[ "$cores" =~ ^[0-9]+$ ]] || cores=0
+  n=$((10#$cores))
+  (( n < floor )) && n=$floor
+  (( n > cap )) && n=$cap
+  printf '%d\n' "$n"
+}
+
 _parallel_agent_abort_pending() {
   [[ -n "${LOG_BASE:-}" ]] || return 1
   [[ -f "$LOG_BASE/.rate-limit-abort" || -f "$LOG_BASE/.rate-limit-sleep-interrupt" \

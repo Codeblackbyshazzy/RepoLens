@@ -120,7 +120,7 @@ runtime ≈ ceil(lenses ÷ max-parallel) waves × depth × rounds × per-iterati
 Each term is a distinct lever:
 
 - **Lenses** — the run's breadth. A full audit fans out across the 248 audit-visible lenses; scoping with `--domain`/`--focus` shrinks this set.
-- **`--max-parallel`** (default 8) — how many lenses run at once. The run advances in *waves* of `ceil(lenses ÷ max-parallel)`, so raising it cuts wall-clock by shrinking the wave count — bounded by host CPU/RAM and provider rate limits.
+- **`--max-parallel`** (default: nproc-aware, `clamp(detected cores, 8, 32)` — `8` on small/CI hosts, up to `32` on many-core machines; an explicit value always wins) — how many lenses run at once. The run advances in *waves* of `ceil(lenses ÷ max-parallel)`, so raising it cuts wall-clock by shrinking the wave count — bounded by host CPU/RAM and provider rate limits.
 - **`--depth`** — the DONE-streak iterations a single lens runs before it is considered complete (see *The DONE×N Streak Protocol* above).
 - **`--rounds`** — how many times the entire selected lens set is re-dispatched, with cross-pollination through the meta-orchestrator between rounds.
 

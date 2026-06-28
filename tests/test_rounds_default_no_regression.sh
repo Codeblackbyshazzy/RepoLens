@@ -49,6 +49,15 @@ set -uo pipefail
 # Prevent CI-injected env from poisoning the default-rounds-1 path under test.
 unset REPOLENS_ROUNDS REPOLENS_MAX_ROUNDS
 
+# Pin the detected core count so the committed baselines stay byte-stable on
+# ANY host (issue #367). The dry-run wall-clock line embeds the resolved
+# --max-parallel value; once the default becomes nproc-aware
+# (clamp(nproc, 8, 32)), an unpinned 16- or 32-core box would render
+# "--max-parallel 16/32" and break the byte-for-byte baseline diff. Pinning
+# REPOLENS_NPROC=8 forces clamp(8, 8, 32)=8, matching the committed baselines'
+# "--max-parallel 8" on every host — no baseline regeneration required.
+export REPOLENS_NPROC=8
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINES_DIR="$SCRIPT_DIR/tests/baselines"
 TMP_PARENT="$SCRIPT_DIR/logs/test-rounds-default-no-regression"

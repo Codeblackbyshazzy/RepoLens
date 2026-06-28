@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- The default `--max-parallel` is now nproc-aware when the flag is unset: it resolves to `clamp(detected CPU cores, 8, 32)`, so small and CI hosts keep today's `8` while many-core machines scale up to `32` for a faster fan-out. An explicit `--max-parallel` is always authoritative and is never re-clamped — you can deliberately run below `8` or above `32` — and an invalid value (non-positive-integer) is now rejected at startup with a clear error instead of misbehaving deep in execution. Because a higher default trips provider rate limits sooner, pin the value down on small account tiers. The new `REPOLENS_NPROC` environment variable pins the detected core count (`clamp(REPOLENS_NPROC, 8, 32)`, parsed base-10) for deterministic runs, estimates, and tests; when unset, RepoLens detects cores via `nproc`/`getconf` and falls back to a floor of `8` ([#367](https://github.com/TheMorpheus407/RepoLens/issues/367))
 - Polish mode now collects structured JSON suggestions, writes `logs/<run-id>/polish/ranked-suggestions.json`, and emits one `[POLISH]` lens-scoped polishing shortlist per lens with ranked top-N suggestions (default 3) and a voice-fit justification for each listed item. Forge runs create remote shortlist issues; `--local` runs write grouped markdown drafts under `logs/<run-id>/polish/filed/` ([#301](https://github.com/TheMorpheus407/RepoLens/issues/301), [#302](https://github.com/TheMorpheus407/RepoLens/issues/302))
 
 ### Added
