@@ -339,8 +339,12 @@ assert_eq "absent verification_status -> status new" \
 
 echo "=== static / builder-owned fields ==="
 
-# type/confidence/markdown_path are null; primary_location is ""; validation {}.
-assert_jq "type is null on every line" 'all(.[]; .type == null)' "$records" stdin
+# confidence/markdown_path are null; primary_location is ""; validation {}.
+# Issue #344: type is now resolved from the cluster's domain (the manifest
+# carries no finding type:), never null. Every fixture entry uses an unmapped
+# domain (code/deployment), so each resolves to the maintainability default.
+assert_jq "type resolves to maintainability on every line (unmapped domain, no manifest type)" \
+  'all(.[]; .type == "maintainability")' "$records" stdin
 assert_jq "confidence is null on every line" 'all(.[]; .confidence == null)' "$records" stdin
 assert_jq "markdown_path is null on every line" 'all(.[]; .markdown_path == null)' "$records" stdin
 assert_jq "primary_location is empty string on every line" \

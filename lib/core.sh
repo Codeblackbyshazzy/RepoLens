@@ -120,6 +120,90 @@ finding_type_normalize() {
   esac
 }
 
+# domain_default_finding_type <domain>
+#   Back-compat fallback: maps a finding's domain (a config/domains.json id) to a
+#   sensible default canonical finding-type, used when a finding carries no
+#   explicit (or no recognizable) `type:` — older runs, or lenses not yet emitting
+#   `type:`. Documented mappings (issue #344 body):
+#     security, llm-security                       -> security-vulnerability
+#     testing                                      -> test-gap
+#     performance                                  -> performance-risk
+#     error-handling, concurrency, database        -> reliability-bug
+#     code-quality, maintainability, architecture,
+#       documentation, i18n                        -> maintainability
+#   config/domains.json carries many more domains than are enumerated here
+#   (compliance, observability, devops, frontend, the deploy/android/discovery/
+#   logs/toolgate families, …); they intentionally fall through to the safe,
+#   non-security `maintainability` default — that is the designed behavior, not a
+#   gap. ALWAYS prints exactly one of the six canonical ids; never empty. The
+#   value is trimmed and lowercased so a slightly-dirty frontmatter domain still
+#   maps. Pure; set -u safe with a missing/empty arg.
+domain_default_finding_type() {
+  local domain="${1:-}"
+
+  domain="${domain#"${domain%%[![:space:]]*}"}"
+  domain="${domain%"${domain##*[![:space:]]}"}"
+  domain="${domain,,}"
+
+  case "$domain" in
+    security|llm-security) printf '%s\n' 'security-vulnerability' ;;
+    testing)              printf '%s\n' 'test-gap' ;;
+    performance)          printf '%s\n' 'performance-risk' ;;
+    error-handling|concurrency|database)
+                          printf '%s\n' 'reliability-bug' ;;
+    # Listed explicitly for self-documentation; these also match the default arm.
+    code-quality|maintainability|architecture|documentation|i18n)
+                          printf '%s\n' 'maintainability' ;;
+    *)                    printf '%s\n' 'maintainability' ;;
+  esac
+}
+
+# _finding_frontmatter_scalar <file> <key>
+#   Prints the trimmed/de-quoted value of a scalar <key> from the leading `---`
+#   frontmatter block ONLY (stops at the closing `---`), or empty string when the
+#   key, file, or block is absent. A `key:`-looking line in the markdown body is
+#   never misparsed. Self-contained awk replica (mirrors
+#   lib/ledger.sh::_ledger_frontmatter_scalar) so lib/core.sh stays sourceable on
+#   its own with no cross-file dependency. Pure; set -u safe.
+_finding_frontmatter_scalar() {
+  local file="${1:-}" key="${2:-}" val
+  [[ -n "$file" && -f "$file" && -n "$key" ]] || { printf ''; return 0; }
+
+  val="$(awk -v key="$key" '
+    NR==1 && $0!="---" { exit 0 }
+    NR==1 { next }
+    $0=="---" { exit 0 }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*:" {
+      sub("^[[:space:]]*" key "[[:space:]]*:[[:space:]]*", "")
+      print
+      exit 0
+    }
+  ' "$file")"
+
+  val="${val#"${val%%[![:space:]]*}"}"
+  val="${val%"${val##*[![:space:]]}"}"
+  val="${val#\"}"; val="${val%\"}"
+  val="${val#\'}"; val="${val%\'}"
+  printf '%s' "$val"
+}
+
+# finding_resolve_type <file>
+#   Canonical finding-type for a finding markdown file: an explicit, valid `type:`
+#   in the leading frontmatter wins (run through finding_type_normalize, so short
+#   aliases like `perf` are repaired); a missing or unrecognized `type:` falls
+#   back to domain_default_finding_type(domain:). ALWAYS prints exactly one of the
+#   six canonical ids — never empty (AC: registry records are always typed). Ready
+#   for the registry writer to call per finding. set -u safe with a missing arg or
+#   a missing file (both resolve to the maintainability default).
+finding_resolve_type() {
+  local file="${1:-}" raw_type domain norm
+  raw_type="$(_finding_frontmatter_scalar "$file" type)"
+  domain="$(_finding_frontmatter_scalar "$file" domain)"
+  norm="$(finding_type_normalize "$raw_type")"
+  [[ -n "$norm" ]] || norm="$(domain_default_finding_type "$domain")"
+  printf '%s\n' "$norm"
+}
+
 # severity_from_title <title>
 #   Extracts a normalized severity from a leading "[SEVERITY]" title prefix,
 #   reusing the strict prefix regex from _synthesize_normalize_title

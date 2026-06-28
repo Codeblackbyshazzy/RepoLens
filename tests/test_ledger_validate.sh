@@ -202,6 +202,27 @@ validate_findings_jsonl "$extra_keys" 2>/dev/null
 status=$?
 assert_success "extra/forward-compatible keys are accepted" "$status"
 
+# Case 5b (issue #344): the three CANONICAL LONG-FORM type ids that
+# finding_resolve_type / finding_type_normalize emit must validate. The builders
+# now write these (replacing type:null), and build_finding_registry validates
+# BEFORE promoting — so if the enum ever drops a long id the whole registry build
+# silently validates to nothing and promotes zero findings. This case is the
+# regression lock for the additive enum reconciliation; the three short forms
+# (security/reliability/performance) are already pinned by Case 1.
+longform_types="$TMPDIR/longform-types.jsonl"
+cat > "$longform_types" <<'EOF'
+{"id":"fnd-long00000001","title":"Canonical long-form security id","severity":"critical","type":"security-vulnerability","domain":"code","lens":"input-validation","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+{"id":"fnd-long00000002","title":"Canonical long-form reliability id","severity":"high","type":"reliability-bug","domain":"code","lens":"memory","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+{"id":"fnd-long00000003","title":"Canonical long-form performance id","severity":"medium","type":"performance-risk","domain":"code","lens":"perf","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+{"id":"fnd-long00000004","title":"Shared-canonical maintainability id","severity":"low","type":"maintainability","domain":"docs","lens":"readme","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+{"id":"fnd-long00000005","title":"Shared-canonical test-gap id","severity":"low","type":"test-gap","domain":"code","lens":"coverage","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+{"id":"fnd-long00000006","title":"Shared-canonical external-dependency id","severity":"medium","type":"external-dependency","domain":"code","lens":"deps","status":"new","primary_location":"","confidence":null,"duplicate_group":null,"markdown_path":null,"validation":{}}
+EOF
+validate_findings_jsonl "$longform_types" 2>"$TMPDIR/longform-types.err"
+status=$?
+assert_success "all six canonical long-form type ids validate (registry-build lock)" "$status"
+assert_contains "long-form type fixture reports no errors" "" "$(cat "$TMPDIR/longform-types.err")"
+
 echo ""
 echo "=== validate_findings_jsonl: violation paths (with line numbers) ==="
 

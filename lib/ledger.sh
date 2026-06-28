@@ -136,6 +136,87 @@ _ledger_severity_normalize() {
   esac
 }
 
+# _ledger_finding_type_normalize <value>
+#   Canonicalizes a raw finding-TYPE string to one of the six closed taxonomy
+#   ids (or "" for unknown). Prefers the shared finding_type_normalize
+#   (lib/core.sh) when it is already sourced; otherwise falls back to a
+#   self-contained replica so lib/ledger.sh keeps resolving types when sourced on
+#   its own (the same defensive pattern as _ledger_severity_normalize above).
+_ledger_finding_type_normalize() {
+  if declare -F finding_type_normalize >/dev/null 2>&1; then
+    finding_type_normalize "${1:-}"
+    return
+  fi
+
+  # Self-contained replica of lib/core.sh::finding_type_normalize.
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" == \[*\] ]]; then
+    value="${value#\[}"; value="${value%\]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+  fi
+  value="${value,,}"
+  case "$value" in
+    security-vulnerability) printf '%s\n' 'security-vulnerability' ;;
+    reliability-bug)        printf '%s\n' 'reliability-bug' ;;
+    performance-risk)       printf '%s\n' 'performance-risk' ;;
+    maintainability)        printf '%s\n' 'maintainability' ;;
+    test-gap)               printf '%s\n' 'test-gap' ;;
+    external-dependency)    printf '%s\n' 'external-dependency' ;;
+    security)               printf '%s\n' 'security-vulnerability' ;;
+    bug|correctness|reliability)
+                            printf '%s\n' 'reliability-bug' ;;
+    perf|performance)       printf '%s\n' 'performance-risk' ;;
+    tests|testing)          printf '%s\n' 'test-gap' ;;
+    cve|dependency)         printf '%s\n' 'external-dependency' ;;
+    *) printf '' ;;
+  esac
+}
+
+# _ledger_domain_default_finding_type <domain>
+#   Back-compat fallback: maps a finding's domain to a default canonical type.
+#   Prefers the shared domain_default_finding_type (lib/core.sh) when sourced;
+#   otherwise a self-contained replica so the builders resolve a domain default
+#   even when lib/ledger.sh is sourced alone. Always prints a canonical id
+#   (unknown/empty -> maintainability, the safe non-security default).
+_ledger_domain_default_finding_type() {
+  if declare -F domain_default_finding_type >/dev/null 2>&1; then
+    domain_default_finding_type "${1:-}"
+    return
+  fi
+
+  # Self-contained replica of lib/core.sh::domain_default_finding_type.
+  local domain="${1:-}"
+  domain="${domain#"${domain%%[![:space:]]*}"}"
+  domain="${domain%"${domain##*[![:space:]]}"}"
+  domain="${domain,,}"
+  case "$domain" in
+    security|llm-security) printf '%s\n' 'security-vulnerability' ;;
+    testing)              printf '%s\n' 'test-gap' ;;
+    performance)          printf '%s\n' 'performance-risk' ;;
+    error-handling|concurrency|database)
+                          printf '%s\n' 'reliability-bug' ;;
+    *)                    printf '%s\n' 'maintainability' ;;
+  esac
+}
+
+# _ledger_resolve_finding_type <raw_type> <domain>
+#   Canonical finding type for a registry record: a valid raw type wins (repaired
+#   via _ledger_finding_type_normalize); otherwise fall back to the domain
+#   default. Always prints exactly one of the six canonical ids — never empty (so
+#   registry records are always typed). Value-based: callers pass already-read
+#   frontmatter so the builders do not re-read the file (mirrors
+#   lib/core.sh::finding_resolve_type, which is the file-reading entry point).
+#   Pure; set -u safe with missing/empty args.
+_ledger_resolve_finding_type() {
+  local norm
+  norm="$(_ledger_finding_type_normalize "${1:-}")"
+  [[ -n "$norm" ]] || norm="$(_ledger_domain_default_finding_type "${2:-}")"
+  printf '%s\n' "$norm"
+}
+
 # build_findings_jsonl_from_manifest <manifest_path> <out_jsonl_path>
 #   Reads a validated synthesizer manifest (logs/<run-id>/final/manifest.json:
 #   a JSON array of cluster objects) and writes the canonical finding registry
@@ -182,7 +263,7 @@ build_findings_jsonl_from_manifest() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local count i entry domain lens title raw_sev sev vstatus status id
+  local count i entry domain lens title raw_sev sev vstatus status id raw_type ftype
   count="$(jq 'length' "$manifest")" || { rm -f "$tmp"; return 1; }
   for (( i = 0; i < count; i++ )); do
     entry="$(jq -c --argjson i "$i" '.[$i]' "$manifest")" || { rm -f "$tmp"; return 1; }
@@ -191,9 +272,14 @@ build_findings_jsonl_from_manifest() {
     title="$(jq -r  '.title // ""'   <<<"$entry")"
     raw_sev="$(jq -r '.severity // ""' <<<"$entry")"
     vstatus="$(jq -r '.verification_status // ""' <<<"$entry")"
+    # Manifest clusters carry no finding taxonomy `type:` today, so this is
+    # normally "" and the type resolves purely from the cluster's domain — the
+    # read is defensive/future-proof in case a manifest ever adds one (#344).
+    raw_type="$(jq -r '.type // ""' <<<"$entry")"
 
     id="$(finding_id "$domain" "$lens" "$title")"
     sev="$(_ledger_severity_normalize "$raw_sev")"
+    ftype="$(_ledger_resolve_finding_type "$raw_type" "$domain")"
     status="new"
     case "$vstatus" in
       wrong) status="likely-false-positive" ;;
@@ -202,12 +288,12 @@ build_findings_jsonl_from_manifest() {
 
     jq -cn \
       --argjson entry "$entry" \
-      --arg id "$id" --arg severity "$sev" --arg status "$status" '
+      --arg id "$id" --arg severity "$sev" --arg status "$status" --arg ftype "$ftype" '
       {
         id: $id,
         title: ($entry.title // ""),
         severity: $severity,
-        type: null,
+        type: $ftype,
         domain: ($entry.domain // ""),
         lens: ($entry.lens // ""),
         status: $status,
@@ -325,7 +411,7 @@ build_findings_jsonl_from_local() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local file rel title severity domain lens id sev
+  local file rel title severity domain lens id sev type_raw ftype
   while IFS= read -r -d '' file; do
     # Skip + warn (not fatal) when there is no valid leading frontmatter block.
     if ! _ledger_has_frontmatter "$file"; then
@@ -337,6 +423,7 @@ build_findings_jsonl_from_local() {
     severity="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" severity)")"
     domain="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" domain)")"
     lens="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" lens)")"
+    type_raw="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" type)")"
 
     # Directory fallback only when the <domain>/<lens> nesting actually exists.
     # rel like <domain>/<lens>/NNN-x.md has 3+ path components; a flat file does
@@ -349,15 +436,18 @@ build_findings_jsonl_from_local() {
 
     id="$(finding_id "$domain" "$lens" "$title")"
     sev="$(_ledger_severity_normalize "$severity")"
+    # Resolve from the POST directory-fallback $domain (not a fresh file read) so
+    # a type:-less file under <domain>/<lens>/NNN.md still gets the right default.
+    ftype="$(_ledger_resolve_finding_type "$type_raw" "$domain")"
 
     jq -cn \
       --arg id "$id" --arg title "$title" --arg severity "$sev" \
-      --arg domain "$domain" --arg lens "$lens" --arg md "$file" '
+      --arg domain "$domain" --arg lens "$lens" --arg md "$file" --arg ftype "$ftype" '
       {
         id: $id,
         title: $title,
         severity: $severity,
-        type: null,
+        type: $ftype,
         domain: $domain,
         lens: $lens,
         status: "new",
@@ -474,7 +564,10 @@ validate_findings_jsonl() {
       def is_nonempty_string: type == "string" and length > 0;
       def severities: ["critical","high","medium","low"];
       def statuses:   ["new","duplicate","needs-validation","likely-false-positive"];
-      def types:      ["security","reliability","performance","maintainability","test-gap","external-dependency"];
+      # Accept BOTH the legacy short forms and the canonical long-form ids that
+      # finding_resolve_type / finding_type_normalize emit (#344). Additive so
+      # existing short-form fixtures stay valid while resolver output validates.
+      def types:      ["security","reliability","performance","maintainability","test-gap","external-dependency","security-vulnerability","reliability-bug","performance-risk"];
       if type != "object" then "not a JSON object"
       else
         . as $v

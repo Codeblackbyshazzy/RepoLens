@@ -397,7 +397,12 @@ echo "=== static / builder-owned fields (every line) ==="
 
 # Local findings have no verification_status and no clusters, so the registry
 # slots stay at their conservative defaults on every record.
-assert_jq "type is null on every line" 'all(.[]; .type == null)' "$records" stdin
+# Issue #344: type is now resolved (frontmatter type: -> domain fallback), never
+# null. None of these fixtures carry an explicit type: and their domains
+# (code/deployment) are unmapped, so each resolves to the maintainability
+# back-compat default.
+assert_jq "type resolves to maintainability on every line (unmapped domain, no explicit type:)" \
+  'all(.[]; .type == "maintainability")' "$records" stdin
 assert_jq "confidence is null on every line" 'all(.[]; .confidence == null)' "$records" stdin
 assert_jq "duplicate_group is null on every line" \
   'all(.[]; .duplicate_group == null)' "$records" stdin
