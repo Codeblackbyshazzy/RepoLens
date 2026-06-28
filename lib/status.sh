@@ -327,6 +327,7 @@ _write_status_snapshot_locked() {
     --argjson max_parallel "$max_parallel" \
     --arg started_at "$started_at" \
     --arg updated_at "$now_iso" \
+    --argjson now_epoch "$now_epoch" \
     --arg state "$state" \
     --arg health "$health" \
     --arg stopped_reason "$stopped_reason" \
@@ -350,6 +351,17 @@ _write_status_snapshot_locked() {
       | ($lenses | map(select(. as $item | (($active_keys | index($item)) | not) and (($completed | index($item)) | not)))) as $queued
       | ($lenses | length) as $total
       | ($completed | length) as $completed_count
+      | ($started_at | (try fromdateiso8601 catch null)) as $start_epoch
+      | (if $start_epoch == null then null
+         else (($now_epoch - $start_epoch) | floor | if . < 0 then 0 else . end)
+         end) as $elapsed_seconds
+      | (if $state == "running"
+            and $completed_count > 0
+            and $elapsed_seconds != null
+            and $elapsed_seconds > 0
+         then ((($total - $completed_count) / $completed_count) * $elapsed_seconds | floor)
+         else null
+         end) as $eta_seconds_remaining
       | {
           run_id: $run_id,
           project: $project,
@@ -373,6 +385,11 @@ _write_status_snapshot_locked() {
             issues_created: $issues_created
           },
           completion_percentage: (if $total == 0 then 0 else (($completed_count * 10000 / $total) | round / 100) end),
+          elapsed_seconds: $elapsed_seconds,
+          eta_seconds_remaining: $eta_seconds_remaining,
+          eta_completion_at: (if $eta_seconds_remaining == null then null
+                              else (($now_epoch + $eta_seconds_remaining) | todateiso8601)
+                              end),
           active: $active,
           queued: $queued,
           completed: $completed
