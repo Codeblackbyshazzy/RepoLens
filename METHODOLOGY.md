@@ -107,6 +107,31 @@ The system falls back to sequential execution automatically when global constrai
 
 ---
 
+## Runtime Model
+
+This is the conceptual companion to the README's operational *Runtime & tuning* section. It explains *why* a full run takes the time it does, so the README's levers are grounded rather than magic. The dominant real-world driver of a multi-day run is per-iteration model latency multiplied across hundreds of lenses and DONE-streak iterations.
+
+**The shape of wall-clock time.** A run's total wall-clock is, to first order, a product of four multipliers:
+
+```
+runtime ≈ ceil(lenses ÷ max-parallel) waves × depth × rounds × per-iteration latency
+```
+
+Each term is a distinct lever:
+
+- **Lenses** — the run's breadth. A full audit fans out across the 248 audit-visible lenses; scoping with `--domain`/`--focus` shrinks this set.
+- **`--max-parallel`** (default 8) — how many lenses run at once. The run advances in *waves* of `ceil(lenses ÷ max-parallel)`, so raising it cuts wall-clock by shrinking the wave count — bounded by host CPU/RAM and provider rate limits.
+- **`--depth`** — the DONE-streak iterations a single lens runs before it is considered complete (see *The DONE×N Streak Protocol* above).
+- **`--rounds`** — how many times the entire selected lens set is re-dispatched, with cross-pollination through the meta-orchestrator between rounds.
+
+Within one lens, two safety bounds cap the worst case: a hard ceiling of 20 iterations and a whole-lens wall-clock budget, `REPOLENS_LENS_MAX_WALL` (default 3600 seconds; see `lib/core.sh` `resolve_lens_max_wall`). Each individual iteration is in turn bounded by the resolved agent timeout (1800 seconds / 30 minutes by default), clamped to whatever remains of the lens budget — so with defaults the 3600-second budget binds before the iteration count does.
+
+**Why agent/model choice dominates a full run.** Per-iteration latency is the only term in the formula set by the agent and model, and it is *multiplicative* over every wave, every depth iteration, and every round. A slow, high-reasoning model adds a fixed per-iteration cost that is then paid across all 248 lenses and all their streak iterations. That single multiplier can turn an hours-long run into a days-long one without changing the lens set at all — which makes **agent/model latency the dominant factor for full-run wall-clock**, the biggest single lever available.
+
+**The trade-off.** `--depth` and `--rounds` buy thoroughness at roughly *linear* time cost: each is a direct multiplier on the formula above. Scoping with `--domain`/`--focus` trades coverage for speed by shrinking the lens count (and therefore the wave count). `--max-parallel` trades host and provider headroom for fewer waves. RepoLens prints an estimated wall-clock line at the confirmation prompt and under `--dry-run`, and warns when that estimate crosses a configurable threshold; see the README **Runtime & tuning** section for the exact commands and tuning levers.
+
+---
+
 ## Mode Isolation
 
 RepoLens supports 11 modes of operation. Mode isolation ensures that each mode sees only the domains and lenses relevant to its purpose, preventing cross-contamination between fundamentally different audit strategies.
