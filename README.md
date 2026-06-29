@@ -440,7 +440,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--scope-by-keywords`  | Deterministic, LLM-free pruning for `--mode bugreport`: case-insensitive substring-match the bug-report text against each domain's optional `keywords` field in `config/domains.json`. Domains without a `keywords` field are always kept (back-compat). A zero-match result falls through with no pruning so the lens list never goes empty. Only effective in `--mode bugreport` (no-op in every other mode). Env fallback: `REPOLENS_SCOPE_BY_KEYWORDS=1`. |
 | `--parallel`           | Run lenses in parallel (one agent process per lens)                                                                                                                                                                                                                                                      |
 | `--max-parallel <n>`   | Max concurrent agents in parallel mode. When unset the default is nproc-aware: `clamp(detected CPU cores, 8, 32)` (8 on small/CI hosts, up to 32 on many-core machines). An explicit value is always authoritative and is never re-clamped — you can deliberately run below `8` or above `32`. A non-positive-integer value is rejected at startup. Higher concurrency trips provider rate limits faster; pin the detected count with `REPOLENS_NPROC`. |
-| `--resume <run-id>`    | Resume a previous interrupted run                                                                                                                                                                                                                                                                        |
+| `--resume [<run-id>]`  | Resume a previous interrupted run. With an explicit run id, resume that run. With no id, auto-select and resume the most recent interrupted run under `logs/` (the chosen run is logged) — completed/clean runs and retired (`supersede`d) runs are never auto-picked, and RepoLens errors out (non-zero exit, no fresh run dir created) when no resumable run exists.                                                                                                                                                                                                                                                                      |
 | `--spec <file>`        | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB). Required for `--mode greenfield`; greenfield treats it as product-owner intent for backlog planning.                                                                                                                                    |
 | `--max-issues <n>`     | Stop after creating _n_ total issues. In polish mode, this caps emitted polishing shortlist issues rather than individual suggestions                                                                                                                                                                    |
 | `--min-severity <level>` | Only file findings at or above `critical`, `high`, `medium`, or `low`. Filtered findings are counted in `summary.json` and reported in final stdout when the count is non-zero. No effect in non-severity modes such as `discover`, `feature`, `custom`, `greenfield`, and `polish`. Env fallback: `REPOLENS_MIN_SEVERITY`. |
@@ -761,6 +761,14 @@ If a run is interrupted, crashes, or ends as `rate-limit-pending`, resume it:
 ```
 
 Completed lenses are skipped; unfinished and rate-limited lenses are retried. The run ID is printed at startup and found in `logs/`.
+
+To skip hunting for the id, drop it — `--resume` with no run id auto-selects and resumes the **most recent interrupted run** under `logs/`:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --resume
+```
+
+The chosen run is logged (`Auto-resuming latest interrupted run: <run-id>`). Only genuine resume candidates qualify: completed/clean runs and retired (`supersede`d) runs are never auto-selected. If no resumable run exists, RepoLens stops with an error instead of starting a fresh run.
 
 ## Output
 

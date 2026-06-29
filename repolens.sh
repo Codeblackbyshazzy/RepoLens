@@ -627,9 +627,18 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --resume)
-      [[ $# -ge 2 ]] || die "Option --resume requires an argument."
-      RESUME_RUN_ID="$2"
-      shift 2
+      # With an explicit run id (any non-flag token), resume that id. With no
+      # following token, or when the next token is itself a flag (e.g.
+      # `--resume --dry-run`), defer to auto-selecting the latest interrupted
+      # run. Run ids never start with `--`, so `--*` is a safe discriminator and
+      # this avoids swallowing a trailing flag as the run id.
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        RESUME_RUN_ID="$2"
+        shift 2
+      else
+        RESUME_RUN_ID="@latest"
+        shift
+      fi
       ;;
     --spec)
       [[ $# -ge 2 ]] || die "Option --spec requires a file path argument."
@@ -1849,6 +1858,14 @@ fi
 
 # --- Generate or resume run ID ---
 if [[ -n "$RESUME_RUN_ID" ]]; then
+  # `--resume` with no explicit id resolves to the newest interrupted run.
+  # Resolve here — before LOG_BASE/acquire_run_lock/mkdir below — so a
+  # no-candidate die leaks no fresh run dir.
+  if [[ "$RESUME_RUN_ID" == "@latest" ]]; then
+    RESUME_RUN_ID="$(_resolve_latest_incomplete_run)" \
+      || die "No interrupted run found to resume; pass an explicit run id or start a fresh run."
+    log_info "Auto-resuming latest interrupted run: $RESUME_RUN_ID"
+  fi
   if [[ "$RESUME_RUN_ID" == *"/"* || "$RESUME_RUN_ID" == "." || "$RESUME_RUN_ID" == ".." ]]; then
     die "Invalid run id '$(status_sanitize_display "$RESUME_RUN_ID")'. Run ids must be direct logs/ children."
   fi

@@ -212,6 +212,31 @@ _clean_is_superseded() {
   [[ ! -L "$marker" && -f "$marker" ]]
 }
 
+# _resolve_latest_incomplete_run — echo the basename of the newest genuine,
+# non-superseded, incomplete run dir under logs/ (the best `--resume` candidate)
+# and return 0; return 1 (echoing nothing) when no such run exists. Reuses the
+# same predicates `clean_command` uses so AutoDev state dirs and partials are
+# excluded, retired (.superseded) runs are never auto-picked, and only true
+# resume candidates qualify. The age basis is the dir mtime — co-located with
+# the predicate and matching how `clean_command` sorts runs newest-first.
+_resolve_latest_incomplete_run() {
+  local logs_dir="${SCRIPT_DIR:-.}/logs" dir mtime
+  local best_dir="" best_mtime=-1
+  [[ -d "$logs_dir" ]] || return 1
+  for dir in "$logs_dir"/*; do
+    _clean_is_run_dir "$dir" || continue       # excludes AutoDev dirs / partials
+    _clean_is_superseded "$dir" && continue    # retired runs are never auto-picked
+    _clean_is_incomplete "$dir" || continue    # resume candidates only
+    mtime="$(_clean_dir_mtime "$dir")"
+    if (( mtime > best_mtime )); then
+      best_mtime="$mtime"
+      best_dir="$dir"
+    fi
+  done
+  [[ -n "$best_dir" ]] || return 1
+  printf '%s\n' "${best_dir##*/}"
+}
+
 # clean_command [OPTIONS] — the `repolens clean` subcommand. Removes eligible
 # old run dirs. Side effects: deletes directories under logs/ (unless
 # --dry-run), writes stdout. Returns 0 on success, non-zero on usage/removal
