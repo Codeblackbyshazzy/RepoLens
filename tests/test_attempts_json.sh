@@ -19,7 +19,10 @@
 # Behavioral contract (from the issue):
 #   - A fresh `--dry-run` writes `logs/<run-id>/attempts.json`: a valid JSON
 #     ARRAY with exactly ONE entry carrying { attempt_id, started_at,
-#     finished_at, status, why_stopped, lenses_completed }.
+#     finished_at, status, why_stopped, lenses_completed_this_attempt,
+#     lenses_completed_total, exit_code }. (The per-attempt delta field was
+#     renamed lenses_completed -> lenses_completed_this_attempt and the
+#     lenses_completed_total + exit_code fields added in issue #375.)
 #   - Resuming that SAME run appends a SECOND entry; `attempt_id` is monotonic
 #     (1, then 2).
 #   - `status` reflects the run's final state (REPOLENS_FINAL_STATE — one of
@@ -174,17 +177,22 @@ assert_eq "run id is discoverable from dry-run output" \
 assert_ok "attempts.json is valid JSON (jq -e .)" jq -e . "$ATT"
 assert_ok "attempts.json is a JSON array" jq -e 'type == "array"' "$ATT"
 assert_ok "attempts.json has exactly 1 entry" jq -e 'length == 1' "$ATT"
-assert_ok "entry has all six schema fields" jq -e '
+assert_ok "entry has all eight schema fields" jq -e '
   .[0]
   | has("attempt_id") and has("started_at") and has("finished_at")
-    and has("status") and has("why_stopped") and has("lenses_completed")' "$ATT"
+    and has("status") and has("why_stopped") and has("lenses_completed_this_attempt")
+    and has("lenses_completed_total") and has("exit_code")' "$ATT"
 assert_ok "attempt_id is 1" jq -e '.[0].attempt_id == 1' "$ATT"
 assert_ok "status is 'finished' for a clean dry-run" \
   jq -e '.[0].status == "finished"' "$ATT"
 assert_ok "why_stopped is empty for a dry-run (no summary.json)" \
   jq -e '.[0].why_stopped == ""' "$ATT"
-assert_ok "lenses_completed is 0 for a dry-run (no lenses ran)" \
-  jq -e '.[0].lenses_completed == 0' "$ATT"
+assert_ok "lenses_completed_this_attempt is 0 for a dry-run (no lenses ran)" \
+  jq -e '.[0].lenses_completed_this_attempt == 0' "$ATT"
+assert_ok "lenses_completed_total is 0 for a dry-run (no lenses ran)" \
+  jq -e '.[0].lenses_completed_total == 0' "$ATT"
+assert_ok "exit_code is 0 for a dry-run (the dry-run path always exits 0)" \
+  jq -e '.[0].exit_code == 0' "$ATT"
 assert_ok "started_at is a UTC +%Y-%m-%dT%H:%M:%SZ timestamp" jq -e '
   .[0].started_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' "$ATT"
 assert_ok "finished_at is a UTC +%Y-%m-%dT%H:%M:%SZ timestamp" jq -e '
@@ -224,9 +232,12 @@ else
   assert_ok "second attempt also carries the full schema" jq -e '
     .[1]
     | has("attempt_id") and has("started_at") and has("finished_at")
-      and has("status") and has("why_stopped") and has("lenses_completed")' "$ATT"
+      and has("status") and has("why_stopped") and has("lenses_completed_this_attempt")
+      and has("lenses_completed_total") and has("exit_code")' "$ATT"
   assert_ok "second attempt status is 'finished'" \
     jq -e '.[1].status == "finished"' "$ATT"
+  assert_ok "second attempt exit_code is 0 (resume dry-run exits 0)" \
+    jq -e '.[1].exit_code == 0' "$ATT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -270,8 +281,12 @@ assert_ok "status is one of the valid REPOLENS_FINAL_STATE values" jq -e '
   .[0].status as $s
   | ["finished","finished-empty","failed","interrupted","rate-limit-pending"]
   | index($s) != null' "$ATT3"
-assert_ok "lenses_completed reflects the completed injection lens (>= 1)" \
-  jq -e '.[0].lenses_completed >= 1' "$ATT3"
+assert_ok "lenses_completed_this_attempt reflects the completed injection lens (>= 1)" \
+  jq -e '.[0].lenses_completed_this_attempt >= 1' "$ATT3"
+assert_ok "lenses_completed_total reflects the cumulative completed count (>= 1)" \
+  jq -e '.[0].lenses_completed_total >= 1' "$ATT3"
+assert_ok "exit_code matches the clean full-run process exit (0)" \
+  jq -e '.[0].exit_code == 0' "$ATT3"
 
 # ---------------------------------------------------------------------------
 # Test 4 — AC#4: a write failure is non-fatal. attempts_finalize must warn and
@@ -312,17 +327,19 @@ assert_ok "attempts_finalize emits a [WARN] on write failure" \
   grep -q '\[WARN\]' "$UNIT_WARN"
 
 # ---------------------------------------------------------------------------
-# Test 5 — lenses_completed is the PER-ATTEMPT DELTA (current .completed count
-# minus the baseline captured at attempts_begin), not a cumulative snapshot —
-# the central design choice of the writer. Also asserts that a non-default
-# status and a non-empty why_stopped propagate verbatim into the entry (every
-# integration test above only ever sees status=="finished" / why_stopped==""),
-# and that the transient .attempt-start marker is removed after a successful
-# finalize. Driven directly through the lib (deterministic, no agent) so the
-# baseline/delta arithmetic across two attempts is exercised exactly.
+# Test 5 — lenses_completed_this_attempt is the PER-ATTEMPT DELTA (current
+# .completed count minus the baseline captured at attempts_begin), while
+# lenses_completed_total is the CUMULATIVE .completed count at finalize — the
+# central design choice of the writer (issue #375 makes both explicit). Also
+# asserts that a non-default status and a non-empty why_stopped propagate
+# verbatim into the entry, that a numeric exit_code argument is recorded as a
+# JSON number while an absent one becomes null, and that the transient
+# .attempt-start marker is removed after a successful finalize. Driven directly
+# through the lib (deterministic, no agent) so the baseline/delta arithmetic
+# across two attempts is exercised exactly.
 # ---------------------------------------------------------------------------
 echo ""
-echo "Test 5: lenses_completed is the per-attempt delta; status + why_stopped propagate"
+echo "Test 5: delta vs cumulative counts; status + why_stopped + exit_code propagate"
 
 DELTA_LB="$TMPDIR/delta-run"
 DELTA_RC1="$TMPDIR/delta-rc1.txt"
@@ -340,17 +357,20 @@ DELTA_MARKER="$TMPDIR/delta-marker.txt"
   mkdir -p "$DELTA_LB"
 
   # Attempt 1: .completed is absent at begin -> baseline 0; two lenses then
-  # complete -> this attempt's delta is 2.
+  # complete -> this attempt's delta is 2, cumulative total is 2. No exit_code
+  # argument is passed, so it must be recorded as null.
   attempts_begin "$DELTA_LB"
   printf 'lens-a\nlens-b\n' >> "$DELTA_LB/.completed"
   attempts_finalize "$DELTA_LB" "finished" ""
   printf '%s\n' "$?" > "$DELTA_RC1"
 
   # Attempt 2: baseline is now 2 (the cumulative .completed); ONE more lens
-  # completes -> this attempt's delta is 1, NOT the cumulative 3.
+  # completes -> this attempt's delta is 1 (NOT the cumulative 3), cumulative
+  # total is 3. A numeric exit_code (3) is passed and must be recorded as a JSON
+  # number.
   attempts_begin "$DELTA_LB"
   printf 'lens-c\n' >> "$DELTA_LB/.completed"
-  attempts_finalize "$DELTA_LB" "rate-limit-pending" "weekly limit reached"
+  attempts_finalize "$DELTA_LB" "rate-limit-pending" "weekly limit reached" 3
   printf '%s\n' "$?" > "$DELTA_RC2"
 
   if [[ -e "$DELTA_LB/.attempt-start" ]]; then
@@ -368,10 +388,18 @@ assert_eq "second delta finalize returns 0" \
 assert_ok "delta-run attempts.json is valid JSON" jq -e . "$DELTA_ATT"
 assert_ok "two attempts recorded across two finalize calls" \
   jq -e 'length == 2' "$DELTA_ATT"
-assert_ok "attempt 1 lenses_completed == 2 (delta from baseline 0)" \
-  jq -e '.[0].lenses_completed == 2' "$DELTA_ATT"
-assert_ok "attempt 2 lenses_completed == 1 (per-attempt delta, NOT cumulative 3)" \
-  jq -e '.[1].lenses_completed == 1' "$DELTA_ATT"
+assert_ok "attempt 1 lenses_completed_this_attempt == 2 (delta from baseline 0)" \
+  jq -e '.[0].lenses_completed_this_attempt == 2' "$DELTA_ATT"
+assert_ok "attempt 1 lenses_completed_total == 2 (cumulative .completed count)" \
+  jq -e '.[0].lenses_completed_total == 2' "$DELTA_ATT"
+assert_ok "attempt 2 lenses_completed_this_attempt == 1 (per-attempt delta, NOT cumulative 3)" \
+  jq -e '.[1].lenses_completed_this_attempt == 1' "$DELTA_ATT"
+assert_ok "attempt 2 lenses_completed_total == 3 (cumulative .completed count)" \
+  jq -e '.[1].lenses_completed_total == 3' "$DELTA_ATT"
+assert_ok "attempt 1 exit_code is null when no exit code is passed" \
+  jq -e '.[0].exit_code == null' "$DELTA_ATT"
+assert_ok "attempt 2 exit_code is the numeric 3 that was passed (JSON number, not string)" \
+  jq -e '.[1].exit_code == 3' "$DELTA_ATT"
 assert_ok "attempt_ids are monotonic 1 then 2 at the unit level" \
   jq -e '.[0].attempt_id == 1 and .[1].attempt_id == 2' "$DELTA_ATT"
 assert_ok "a non-default status propagates verbatim (rate-limit-pending)" \
@@ -481,8 +509,10 @@ assert_ok "an entry is still recorded with attempt_id 1" \
   jq -e 'length == 1 and .[0].attempt_id == 1' "$NOMARK_ATT"
 assert_ok "started_at falls back to empty string when no marker exists" \
   jq -e '.[0].started_at == ""' "$NOMARK_ATT"
-assert_ok "lenses_completed uses the baseline-0 fallback (current count == 1)" \
-  jq -e '.[0].lenses_completed == 1' "$NOMARK_ATT"
+assert_ok "lenses_completed_this_attempt uses the baseline-0 fallback (current count == 1)" \
+  jq -e '.[0].lenses_completed_this_attempt == 1' "$NOMARK_ATT"
+assert_ok "lenses_completed_total reflects the current .completed count (== 1)" \
+  jq -e '.[0].lenses_completed_total == 1' "$NOMARK_ATT"
 assert_ok "status and why_stopped still propagate without a marker" \
   jq -e '.[0].status == "failed" and .[0].why_stopped == "boom"' "$NOMARK_ATT"
 

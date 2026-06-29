@@ -1433,6 +1433,76 @@ is_phase_rate_limit_stopped_reason() {
   esac
 }
 
+# resolve_run_exit_code — print the process exit code implied by the already-
+# resolved run state. PURE map (no side effects); it mirrors the exit-code
+# ladder at the end of main so the value recorded in attempts.json and the real
+# process exit can never drift. Must be called after REPOLENS_FINAL_STATE /
+# RUN_HEALTH / RUN_ROUNDS_RC are final. Keep the order identical to the ladder:
+# interrupted -> rate-limit-abort -> no-progress/systemic -> rounds-rc ->
+# broken-health -> 0.
+resolve_run_exit_code() {
+  if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
+    printf '%s' "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    if is_phase_rate_limit_stopped_reason "$(rate_limit_abort_stopped_reason)"; then
+      printf '1'
+    else
+      printf '3'
+    fi
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.agent-no-progress-abort" || -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    printf '1'
+    return 0
+  fi
+  if [[ "${RUN_ROUNDS_RC:-0}" -ne 0 ]]; then
+    printf '%s' "${RUN_ROUNDS_RC:-0}"
+    return 0
+  fi
+  if [[ "${RUN_HEALTH:-ok}" == "broken" && "${REPOLENS_ALLOW_DEGENERATE:-false}" != "true" ]]; then
+    printf '2'
+    return 0
+  fi
+  printf '0'
+}
+
+# resolve_why_stopped — print the attempt's why_stopped string. Prefers
+# summary.json's stopped_reason; when that is empty (e.g. a summary-write race or
+# a sentinel dropped without a stop reason) it falls back to whichever abort
+# sentinel is present so the attempt entry is never blank while the run clearly
+# aborted. Reads SUMMARY_FILE + the LOG_BASE sentinels; no side effects.
+resolve_why_stopped() {
+  local reason
+  reason="$(jq -r '.stopped_reason // empty' "$SUMMARY_FILE" 2>/dev/null || printf '')"
+  if [[ -n "$reason" ]]; then
+    printf '%s' "$reason"
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    printf 'rate-limit'
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
+    printf 'agent-no-progress'
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    printf 'systemic-failure'
+    return 0
+  fi
+  if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
+    case "${REPOLENS_INTERRUPT_EXIT_CODE:-130}" in
+      129) printf 'interrupted-sighup' ;;
+      143) printf 'interrupted-sigterm' ;;
+      *) printf 'interrupted-sigint' ;;
+    esac
+    return 0
+  fi
+  printf ''
+}
+
 apply_rate_limit_abort_final_state() {
   local marker key value exit_code="" stopped_reason="" existing_reason
 
@@ -2973,8 +3043,9 @@ if $DRY_RUN; then
   # Record this invocation before the dry-run exit (#371). --dry-run exits far
   # before the main finalize block, so without this call a dry-run would leave
   # no attempt entry. summary.json does not exist yet here, so why_stopped is
-  # empty and status defaults to "finished". Non-fatal.
-  attempts_finalize "$LOG_BASE" "${REPOLENS_FINAL_STATE:-finished}" "" || true
+  # empty and status defaults to "finished". The dry-run path always exits 0, so
+  # record exit_code 0 (#375). Non-fatal.
+  attempts_finalize "$LOG_BASE" "${REPOLENS_FINAL_STATE:-finished}" "" 0 || true
   exit 0
 fi
 
@@ -3898,14 +3969,22 @@ case "$RUN_HEALTH" in
     ;;
 esac
 
-# Record this invocation in the per-attempt audit trail (#371), now that
-# REPOLENS_FINAL_STATE / RUN_HEALTH are resolved and summary.json exists.
-# why_stopped is the stopped_reason from summary.json (empty if absent/null).
+# Resolve the process exit code ONCE, up front, from the now-final run state
+# (REPOLENS_FINAL_STATE / RUN_HEALTH / RUN_ROUNDS_RC). The exit-code ladder below
+# routes through this same value so the code recorded in attempts.json can never
+# drift from the real process exit (#375).
+RUN_EXIT_CODE="$(resolve_run_exit_code)"
+
+# Record this invocation in the per-attempt audit trail (#371), enriched for
+# triage (#375), now that REPOLENS_FINAL_STATE / RUN_HEALTH are resolved and
+# summary.json exists. why_stopped prefers summary.json's stopped_reason and
+# falls back to the present abort sentinel; exit_code is the resolved code above.
 # Non-fatal: a write failure logs a warning and never changes the exit code.
 attempts_finalize \
   "$LOG_BASE" \
   "${REPOLENS_FINAL_STATE:-finished}" \
-  "$(jq -r '.stopped_reason // empty' "$SUMMARY_FILE" 2>/dev/null || printf '')" || true
+  "$(resolve_why_stopped)" \
+  "$RUN_EXIT_CODE" || true
 
 # Emit the canonical latest-result pointer at the top of the logs tree (#308).
 # Non-fatal: a pointer-write failure logs a warning and never changes exit code.
@@ -3947,30 +4026,31 @@ echo ""
 echo "=== RepoLens Run Summary ==="
 jq '.' "$SUMMARY_FILE"
 
+# Exit-code ladder. The numeric code comes from RUN_EXIT_CODE (resolved above by
+# resolve_run_exit_code) so it can never drift from the attempts.json record;
+# each branch below only decides WHICH side effects (resume hints) to emit. Keep
+# the branch order identical to resolve_run_exit_code.
 if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
   print_resume_hint
-  exit "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
   # Both the phase rate-limit (exit 1) and rate-limit-pending (exit 3) outcomes
-  # are resumable; print once before the split so neither path is missed.
+  # are resumable; RUN_EXIT_CODE already carries the right one.
   print_resume_hint
-  if is_phase_rate_limit_stopped_reason "$(rate_limit_abort_stopped_reason)"; then
-    exit 1
-  fi
-  exit 3
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ -f "$LOG_BASE/.agent-no-progress-abort" || -f "$LOG_BASE/.systemic-failure-abort" ]]; then
   print_resume_hint
-  exit 1
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ "$RUN_ROUNDS_RC" -ne 0 ]]; then
-  exit "$RUN_ROUNDS_RC"
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ "$RUN_HEALTH" == "broken" && "${REPOLENS_ALLOW_DEGENERATE:-false}" != "true" ]]; then
-  exit 2
+  exit "$RUN_EXIT_CODE"
 fi

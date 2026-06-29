@@ -27,23 +27,29 @@
 #   attempts_begin <log_base>                       — called once near run-id
 #       resolution; records started_at + a baseline .completed line count to a
 #       transient `.attempt-start` marker.
-#   attempts_finalize <log_base> <status> <why>     — appends one attempt entry
-#       atomically (temp file + mv).
+#   attempts_finalize <log_base> <status> <why> <exit_code>
+#       — appends one attempt entry atomically (temp file + mv).
 #
-# Each attempt entry:
-#   attempt_id        monotonic 1-based int (= current array length + 1)
-#   started_at        UTC +%Y-%m-%dT%H:%M:%SZ (from the .attempt-start marker)
-#   finished_at       UTC +%Y-%m-%dT%H:%M:%SZ (at finalize)
-#   status            REPOLENS_FINAL_STATE: finished / finished-empty / failed /
-#                     interrupted / rate-limit-pending
-#   why_stopped       the stopped_reason from summary.json, or "" if absent
-#   lenses_completed  lenses completed during THIS attempt (delta = current
-#                     .completed line count - baseline at attempts_begin),
-#                     clamped at >= 0. The per-attempt delta is chosen over a
-#                     cumulative snapshot because the cumulative total is
-#                     already trivially recoverable as `wc -l .completed`,
-#                     while "what did THIS pass complete" is the question the
-#                     audit trail exists to answer.
+# Each attempt entry (issue #375 enriched the #371 base for triage):
+#   attempt_id                    monotonic 1-based int (= array length + 1)
+#   started_at                    UTC +%Y-%m-%dT%H:%M:%SZ (.attempt-start marker)
+#   finished_at                   UTC +%Y-%m-%dT%H:%M:%SZ (at finalize)
+#   status                        REPOLENS_FINAL_STATE: finished / finished-empty
+#                                 / failed / interrupted / rate-limit-pending
+#   why_stopped                   the stopped_reason from summary.json, or a
+#                                 sentinel fallback (rate-limit / agent-no-progress
+#                                 / systemic-failure / interrupted-<signal>), or ""
+#   lenses_completed_this_attempt lenses completed during THIS attempt (delta =
+#                                 current .completed line count - baseline at
+#                                 attempts_begin), clamped at >= 0. Answers "what
+#                                 did THIS pass complete", which a cumulative
+#                                 snapshot cannot.
+#   lenses_completed_total        cumulative .completed line count at finalize —
+#                                 "how far is the WHOLE run", across all attempts.
+#   exit_code                     the process exit code this attempt is about to
+#                                 exit with, as a JSON number; null when no exit
+#                                 code is passed (e.g. a finalize that predates
+#                                 the exit-code resolution).
 #
 # The write is additive and strictly non-fatal: every failure path logs a
 # warning and returns 0 so an attempts-write failure never changes the run's
@@ -99,18 +105,22 @@ attempts_begin() {
   return 0
 }
 
-# attempts_finalize <log_base> <status> <why_stopped> — append one attempt
-# entry to <log_base>/attempts.json atomically (temp file in <log_base> + mv).
+# attempts_finalize <log_base> <status> <why_stopped> <exit_code> — append one
+# attempt entry to <log_base>/attempts.json atomically (temp file in <log_base>
+# + mv).
 #
 # Reads started_at + baseline_completed from the .attempt-start marker written
 # by attempts_begin (fallbacks: started_at="", baseline 0 if absent). attempt_id
-# is the current array length + 1; lenses_completed is the per-attempt delta.
+# is the current array length + 1; lenses_completed_this_attempt is the
+# per-attempt delta, lenses_completed_total is the cumulative .completed count.
+# exit_code is recorded as a JSON number when numeric, else null (the 4th arg is
+# optional so a caller that does not know the exit code records null).
 #
 # Side effects: creates/extends <log_base>/attempts.json; removes the
 # .attempt-start marker on success. Never aborts the caller — returns 0 on every
 # path; warnings go to log_warn.
 attempts_finalize() {
-  local log_base="${1:-}" status="${2:-finished}" why_stopped="${3:-}"
+  local log_base="${1:-}" status="${2:-finished}" why_stopped="${3:-}" exit_code="${4:-}"
 
   if [[ -z "$log_base" ]]; then
     log_warn "attempts: no log_base provided; skipping attempt record"
@@ -155,12 +165,19 @@ attempts_finalize() {
   attempt_id="$(printf '%s' "$existing" | jq 'length + 1' 2>/dev/null || printf '')"
   [[ "$attempt_id" =~ ^[0-9]+$ ]] || attempt_id=1
 
-  # lenses_completed = work done during THIS attempt (current - baseline),
-  # clamped at >= 0 defensively.
+  # lenses_completed_this_attempt = work done during THIS attempt (current -
+  # baseline), clamped at >= 0 defensively. lenses_completed_total = the same
+  # cumulative current_completed count, recorded so consumers don't have to read
+  # .completed separately.
   local current_completed lenses_completed
   current_completed="$(_attempts_completed_count "$log_base")"
   lenses_completed=$(( current_completed - baseline ))
   (( lenses_completed < 0 )) && lenses_completed=0
+
+  # exit_code -> JSON number when numeric, else JSON null (the field is always
+  # present so consumers can rely on its shape).
+  local exit_code_json='null'
+  [[ "$exit_code" =~ ^[0-9]+$ ]] && exit_code_json="$exit_code"
 
   # Atomic write: temp file inside log_base (same filesystem) + mv. A
   # non-writable log_base makes mktemp fail and we bail non-fatally.
@@ -176,14 +193,18 @@ attempts_finalize() {
       --arg finished_at "$finished_at" \
       --arg status "$status" \
       --arg why_stopped "$why_stopped" \
-      --argjson lenses_completed "$lenses_completed" \
+      --argjson lenses_completed_this_attempt "$lenses_completed" \
+      --argjson lenses_completed_total "$current_completed" \
+      --argjson exit_code "$exit_code_json" \
       '. + [{
         attempt_id: $attempt_id,
         started_at: $started_at,
         finished_at: $finished_at,
         status: $status,
         why_stopped: $why_stopped,
-        lenses_completed: $lenses_completed
+        lenses_completed_this_attempt: $lenses_completed_this_attempt,
+        lenses_completed_total: $lenses_completed_total,
+        exit_code: $exit_code
       }]' > "$tmp" 2>/dev/null; then
     log_warn "attempts: failed to build JSON; skipping attempt record"
     rm -f "$tmp" 2>/dev/null
