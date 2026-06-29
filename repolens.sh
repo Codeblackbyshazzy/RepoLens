@@ -4026,6 +4026,22 @@ echo ""
 echo "=== RepoLens Run Summary ==="
 jq '.' "$SUMMARY_FILE"
 
+# Surface the parent-run + attempts model (#377): when this run dir represents
+# one parent that took more than one attempt (a fresh start plus one or more
+# --resume invocations), print a single legible note pointing at the full
+# continuation history. attempts_finalize (above) has already appended the
+# current attempt, so the count includes it. Single-attempt runs print nothing.
+# Non-fatal: jq-guarded and tolerant of an absent/corrupt attempts.json.
+if command -v jq >/dev/null 2>&1 && [[ -f "$LOG_BASE/attempts.json" ]]; then
+  _attempts_n="$(jq -r 'if type == "array" then length else 0 end' "$LOG_BASE/attempts.json" 2>/dev/null || printf '0')"
+  [[ "$_attempts_n" =~ ^[0-9]+$ ]] || _attempts_n=0
+  if (( _attempts_n > 1 )); then
+    _attempts_latest="$(jq -r 'if type == "array" then (last.status // "") else "" end' "$LOG_BASE/attempts.json" 2>/dev/null || printf '')"
+    echo "This run took ${_attempts_n} attempts (latest: ${_attempts_latest}). Full continuation history: logs/${RUN_ID}/attempts.json"
+  fi
+  unset _attempts_n _attempts_latest
+fi
+
 # Exit-code ladder. The numeric code comes from RUN_EXIT_CODE (resolved above by
 # resolve_run_exit_code) so it can never drift from the attempts.json record;
 # each branch below only decides WHICH side effects (resume hints) to emit. Keep

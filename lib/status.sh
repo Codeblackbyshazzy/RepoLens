@@ -172,6 +172,7 @@ cleanup_status_snapshot_temps() {
     "$log_base"/.status.active.* \
     "$log_base"/.status.completed.* \
     "$log_base"/.status.lenses.* \
+    "$log_base"/.status.attempts.* \
     2>/dev/null || true
 }
 
@@ -200,7 +201,7 @@ _write_status_snapshot_locked() {
   local remote_target="${14:-}" remote_label="${15:-}"
   local status_file="$log_base/status.json"
   local tmp_file="${status_file}.tmp.${BASHPID}"
-  local active_tmp completed_tmp lenses_tmp
+  local active_tmp completed_tmp lenses_tmp attempts_tmp
   local now_iso now_epoch started_at issues_created health stopped_reason next_action_earliest_at
   local heartbeat_file
 
@@ -271,6 +272,10 @@ _write_status_snapshot_locked() {
     rm -f "$active_tmp" "$completed_tmp"
     return 1
   }
+  attempts_tmp="$(mktemp "$log_base/.status.attempts.XXXXXX")" || {
+    rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp"
+    return 1
+  }
 
   : > "$active_tmp"
   if [[ -d "$heartbeat_dir" ]]; then
@@ -315,6 +320,26 @@ _write_status_snapshot_locked() {
     : > "$lenses_tmp"
   fi
 
+  # Project the per-attempt audit trail (#371/#375) into a compact array for the
+  # snapshot. Absent / corrupt / non-array attempts.json degrades to [] — strictly
+  # non-fatal, consistent with the rest of this builder.
+  if [[ -f "$log_base/attempts.json" ]]; then
+    jq -c '
+      if type == "array" then
+        map({
+          attempt_id: .attempt_id,
+          status: .status,
+          why_stopped: .why_stopped,
+          lenses_completed_this_attempt: .lenses_completed_this_attempt
+        })
+      else
+        []
+      end
+    ' "$log_base/attempts.json" > "$attempts_tmp" 2>/dev/null || printf '[]' > "$attempts_tmp"
+  else
+    printf '[]' > "$attempts_tmp"
+  fi
+
   jq -n \
     --arg run_id "$run_id" \
     --arg project "$project" \
@@ -334,6 +359,7 @@ _write_status_snapshot_locked() {
     --arg next_action_earliest_at "$next_action_earliest_at" \
     --argjson issues_created "$issues_created" \
     --slurpfile active_raw <(jq -s 'sort_by(.domain, .lens_id)' "$active_tmp" 2>/dev/null || printf '[]') \
+    --slurpfile attempts_raw "$attempts_tmp" \
     --rawfile completed_raw "$completed_tmp" \
     --rawfile lenses_raw "$lenses_tmp" \
     '
@@ -392,7 +418,8 @@ _write_status_snapshot_locked() {
                               end),
           active: $active,
           queued: $queued,
-          completed: $completed
+          completed: $completed,
+          attempts: ($attempts_raw[0] // [])
         }
       | if $state == "rate-limit-pending" and $next_action_earliest_at != "" then
           . + {next_action: {earliest_at: $next_action_earliest_at}}
@@ -402,7 +429,7 @@ _write_status_snapshot_locked() {
     ' > "$tmp_file" && mv -f "$tmp_file" "$status_file"
 
   local rc=$?
-  rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp" "$tmp_file"
+  rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp" "$attempts_tmp" "$tmp_file"
   return "$rc"
 }
 
@@ -1023,6 +1050,17 @@ status_render_human() {
   printf '  updated:   %s  (%s ago)\n' "$(status_format_iso_utc "$updated_at")" "$(status_relative_from_iso "$updated_at")"
   printf '  progress:  %s/%s completed  |  %s active  |  %s queued  |  %s issues created\n' \
     "$completed_count" "$total_lenses" "$active_count" "$queued_count" "$issues_created"
+
+  # Surface the parent-run attempts count (#377) when this run took more than one
+  # attempt (a fresh start + one or more resumes). Read standalone rather than via
+  # the meta mapfile so the field-count guard above is unaffected.
+  local attempts_count attempts_latest
+  attempts_count="$(jq -r '(.attempts // []) | length' "$status_file" 2>/dev/null || printf '0')"
+  [[ "$attempts_count" =~ ^[0-9]+$ ]] || attempts_count=0
+  if (( attempts_count > 1 )); then
+    attempts_latest="$(jq -r '(.attempts // []) | last | .status // ""' "$status_file" 2>/dev/null || printf '')"
+    printf '  attempts:  %s  (latest: %s)\n' "$attempts_count" "$(status_sanitize_display "$attempts_latest")"
+  fi
 
   local elapsed_display remaining_display
   if [[ "$elapsed_seconds" =~ ^[0-9]+$ ]]; then
