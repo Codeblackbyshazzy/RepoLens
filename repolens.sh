@@ -177,7 +177,9 @@ Options:
                           An explicit value is always authoritative and is never
                           re-clamped. Higher concurrency trips provider rate
                           limits faster. See REPOLENS_NPROC to pin the count.
-  --resume <run-id>       Resume a previous interrupted run
+  --resume [<run-id>]     Resume a previous interrupted run (reuses its dir,
+                          skips completed lenses; add --focus/--domain to
+                          narrow). With no id, picks the latest interrupted run.
   --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield)
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
   --min-severity <level>  Only file findings at or above level: critical|high|medium|low

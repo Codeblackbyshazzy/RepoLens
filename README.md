@@ -177,7 +177,7 @@ The printed estimate is a rough planning number; faster/cheaper agents and tight
 - **GitHub API / Gitea API / Forgejo API.** Authenticated `gh` calls count against GitHub API quotas; authenticated `tea` and `fj` calls count against your Gitea or Forgejo account/API quotas. Large runs can trip rate limits. Use `--max-issues <n>` to cap output, or `--local` to skip remote forge calls entirely.
 - **Concurrent same-repo runs.** Starting multiple runs against the same repository is supported. Remote label setup is coordinated per repository; repeated runs with the same desired label set can reuse a fresh bootstrap result, while other runs create only missing labels when the forge supports label listing. Per-lens issue checks still run independently, so lower `--max-parallel` when running several modes at once against the same forge account.
 - **AI provider rate limits.** Every iteration consumes Anthropic / OpenAI tokens. Free and low-tier accounts will hit their RPM (requests-per-minute) and TPM (tokens-per-minute) ceilings immediately under `--parallel`. Verify your account is on a tier sized for concurrent agent traffic before scaling.
-- **Automatic agent retry.** If an agent exits non-zero with a recognized rate-limit message and a parseable resume time within `REPOLENS_RATE_LIMIT_MAX_SLEEP`, RepoLens sleeps until that time plus 60 seconds and retries the same lens once. If RepoLens cannot use that retry path during lens execution, the run finalizes as `rate-limit-pending`, exits `3`, and leaves unfinished lenses resumable. When RepoLens knows the provider retry time for a terminal pending run, `status.json.next_action.earliest_at` exposes it as a UTC timestamp. If the retry sleep is interrupted by SIGHUP, SIGINT, or SIGTERM, the run finalizes as `interrupted` with stopped reason `interrupted-sighup`, `interrupted-sigint`, or `interrupted-sigterm` and exits `129`, `130`, or `143`.
+- **Automatic agent retry.** If an agent exits non-zero with a recognized rate-limit message and a parseable resume time within `REPOLENS_RATE_LIMIT_MAX_SLEEP`, RepoLens sleeps until that time plus 60 seconds and retries the same lens once. If RepoLens cannot use that retry path during lens execution, the run finalizes as `rate-limit-pending`, exits `3`, and leaves unfinished lenses resumable (see [Resume](#resume)). When RepoLens knows the provider retry time for a terminal pending run, `status.json.next_action.earliest_at` exposes it as a UTC timestamp. If the retry sleep is interrupted by SIGHUP, SIGINT, or SIGTERM, the run finalizes as `interrupted` with stopped reason `interrupted-sighup`, `interrupted-sigint`, or `interrupted-sigterm` and exits `129`, `130`, or `143`.
 - **Terms of Service & abuse risk.** Do **not** point RepoLens at repositories you do not own or have explicit permission to audit. Automated bulk issue creation against third-party repos can be treated as spam by your forge provider and may get your account flagged or suspended.
 
 Start small with `--focus <lens-id>` or one `--domain`, then scale up with `--parallel --max-parallel 2` before raising concurrency. When `--max-parallel` is unset the default is nproc-aware (`clamp(detected CPU cores, 8, 32)`), so a many-core host defaults to a higher concurrency and hits provider limits sooner — pin it down explicitly (the value you pass always wins) if your account tier is small.
@@ -761,6 +761,13 @@ If a run is interrupted, crashes, or ends as `rate-limit-pending`, resume it:
 ```
 
 Completed lenses are skipped; unfinished and rate-limited lenses are retried. The run ID is printed at startup and found in `logs/`.
+
+Resume **reuses the same `logs/<run-id>/` directory** — it does not create a new sibling run. Lenses that already finished are recorded in `logs/<run-id>/.completed` and are skipped on resume; only unfinished and rate-limited lenses run again. You can **narrow a resume** by adding `--focus <lens-id>` or `--domain <domain-id>`: only those lenses run, and their results merge into the same run rather than starting a fresh directory.
+
+```bash
+# Resume a run but only re-run the injection lens; results merge into <run-id>
+./repolens.sh --project ~/app --agent claude --resume <run-id> --focus injection
+```
 
 To skip hunting for the id, drop it — `--resume` with no run id auto-selects and resumes the **most recent interrupted run** under `logs/`:
 
