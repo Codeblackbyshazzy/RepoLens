@@ -6,9 +6,9 @@
 
 ## Abstract
 
-RepoLens implements **Lens-Based Auditing (LBA)**, a methodology for automated code analysis that decomposes the audit problem into 336 narrow-focus specialist agents ("lenses") across 33 domains. Rather than asking a single generalist agent to review an entire codebase for every possible concern, LBA assigns each concern to a dedicated expert lens — one that examines the code through a single, specific perspective.
+RepoLens implements **Lens-Based Auditing (LBA)**, a methodology for automated code analysis that decomposes the audit problem into 337 narrow-focus specialist agents ("lenses") across 34 domains. Rather than asking a single generalist agent to review an entire codebase for every possible concern, LBA assigns each concern to a dedicated expert lens — one that examines the code through a single, specific perspective.
 
-The tool currently supports 11 modes of operation (audit, feature, bugfix, bugreport, discover, deploy, opensource, content, greenfield, custom, polish), multiple agent backends, parallel execution, automated issue creation, and ranked polishing shortlists. This document describes the methodology behind the tool: what Lensing is, why it works, and how its components fit together.
+The tool currently supports 12 modes of operation (audit, feature, bugfix, bugreport, discover, deploy, opensource, content, greenfield, custom, polish, spec-change), multiple agent backends, parallel execution, automated issue creation, and ranked polishing shortlists. This document describes the methodology behind the tool: what Lensing is, why it works, and how its components fit together.
 
 ---
 
@@ -31,7 +31,7 @@ At execution time, a template engine merges a mode-specific base template with t
 - **Parallel execution** — lenses run concurrently via a file-based semaphore, with no shared state
 - **Agent-agnostic** — any LLM agent CLI (claude, codex, spark, opencode) can execute lenses
 
-The current lens inventory spans 33 domains with 336 total lenses, broken down as: 230 code analysis/audit-visible lenses (209 code analysis plus 21 runtime log analysis) + 18 tool gate + 14 product discovery + 43 deployment and Android audit + 13 open-source readiness + 17 content quality + 1 greenfield planning. Polish mode adds 16 suggestion lenses across the `fluency`, `effort-signal`, and `hedonic` domains.
+The current lens inventory spans 34 domains with 337 total lenses, broken down as: 230 code analysis/audit-visible lenses (209 code analysis plus 21 runtime log analysis) + 18 tool gate + 14 product discovery + 43 deployment and Android audit + 13 open-source readiness + 17 content quality + 1 greenfield planning + 1 spec-change planning. Polish mode adds 16 suggestion lenses across the `fluency`, `effort-signal`, and `hedonic` domains.
 
 ---
 
@@ -39,7 +39,7 @@ The current lens inventory spans 33 domains with 336 total lenses, broken down a
 
 Traditional monolithic LLM code review asks a single prompt to cover all concerns — security, performance, architecture, testing, accessibility, and more — simultaneously. This approach suffers from **attention dilution**: each concern receives shallow treatment because the model's context window and focus are spread thin across every domain at once.
 
-LBA takes the opposite approach. By assigning one prompt per concern (336 total), each lens can devote its full context window and specialization depth to a single domain. The advantages of this decomposition include:
+LBA takes the opposite approach. By assigning one prompt per concern (337 total), each lens can devote its full context window and specialization depth to a single domain. The advantages of this decomposition include:
 
 | Dimension | Monolithic Review | Lens-Based Auditing |
 |-----------|-------------------|---------------------|
@@ -134,7 +134,7 @@ Within one lens, two safety bounds cap the worst case: a hard ceiling of 20 iter
 
 ## Mode Isolation
 
-RepoLens supports 11 modes of operation. Mode isolation ensures that each mode sees only the domains and lenses relevant to its purpose, preventing cross-contamination between fundamentally different audit strategies.
+RepoLens supports 12 modes of operation. Mode isolation ensures that each mode sees only the domains and lenses relevant to its purpose, preventing cross-contamination between fundamentally different audit strategies.
 
 Mode isolation is implemented through three mechanisms:
 
@@ -142,7 +142,7 @@ Mode isolation is implemented through three mechanisms:
 2. **Base prompt selection** — Each mode has a dedicated base template that shapes agent behavior
 3. **Behavioral parameters** — DONE streak threshold, label prefix, issue severity schema, and confirmation gates vary per mode
 
-**The 11 modes:**
+**The 12 modes:**
 
 The `--depth default` and `--rounds default` columns reflect the CLI defaults as of this revision. `--depth` controls within-lens iteration; `--rounds` controls across-lens cross-pollination via the meta-orchestrator (see next section). Modes marked "1 (locked)" cap `--rounds` at 1 by design — single-pass operation is intrinsic to those modes.
 
@@ -159,6 +159,7 @@ The `--depth default` and `--rounds default` columns reflect the CLI defaults as
 | **content** | Content quality and creation | 17 (content quality only) | 1 | 1 (locked) |
 | **greenfield** | Spec-to-backlog planning for a new or skeletal project. Requires `--spec <file>`, checks the current open issue or local draft backlog, and creates non-duplicate implementation-sized `[P0]`-`[P3]` issues without inspecting repository code | 1 (greenfield planning only) | 1 | 1 (locked) |
 | **polish** | Ranked polishing shortlists for small, additive craft refinements with voice-fit evidence | 16 (`fluency`, `effort-signal`, and `hedonic` polish domains; `fluency` is visual-UI only) | 1 | 1 (locked) |
+| **spec-change** | Spec-diff impact analysis. Requires `--spec <tracked-file>`, diffs it against `--spec-base` (default `HEAD`), and files one impact-prefixed (`[BREAKING]`/`[REQUIRED]`/`[RECOMMENDED]`/`[OPTIONAL]`) issue per code change the diff implies | 1 (spec-change planning only) | 1 | 1 (locked) |
 
 Each mode uses its own output schema (e.g., audit uses CRITICAL/HIGH/MEDIUM/LOW, discover uses SMALL/MEDIUM/LARGE/XL, custom uses BREAKING/REQUIRED/RECOMMENDED/OPTIONAL, and greenfield uses P0/P1/P2/P3) and its own label format when labels apply.
 

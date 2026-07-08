@@ -5,7 +5,7 @@
 [![CI](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml/badge.svg)](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/TheMorpheus407/RepoLens?style=social)](https://github.com/TheMorpheus407/RepoLens)
 
-**Multi-lens code audit tool.** Runs 336 specialist lenses across 33 domains against any git repository, live server, Android APK, or product specification and creates remote issues for real findings, backlog work, or polishing shortlists. The polish pass also writes ranked suggestion artifacts for review. Think automated code review, agent-driven pentesting, tool-driven static/dynamic analysis, infrastructure auditing, Android auditing, spec-to-backlog planning, and polishing — all with deep specialization.
+**Multi-lens code audit tool.** Runs 337 specialist lenses across 34 domains against any git repository, live server, Android APK, or product specification and creates remote issues for real findings, backlog work, or polishing shortlists. The polish pass also writes ranked suggestion artifacts for review. Think automated code review, agent-driven pentesting, tool-driven static/dynamic analysis, infrastructure auditing, Android auditing, spec-to-backlog planning, and polishing — all with deep specialization.
 
 > [!IMPORTANT]
 > **RepoLens runs AI agents with shell access against your repository, and a full audit can cost hundreds of dollars in API charges.** It is NOT a sandboxed security tool, comes with NO warranty, and you use it entirely at your own risk. **Read [Warnings & Limits](#warnings--limits) before your first run** — especially the cost and security sections.
@@ -131,7 +131,7 @@ RepoLens is a power tool. Before you point it at anything you care about — or 
 ### Cost — RepoLens can be very expensive
 
 > [!CAUTION]
-> A default full audit runs **248 audit-visible lenses across 27 code/toolgate/logs domains**. RepoLens has 336 lenses across 33 domains in total for issue and backlog modes, but `discover`, `deploy`, `opensource`, `content`, and `greenfield` lenses are mode-specific and do not run in the default audit mode. The separate polish pass has its own 16 suggestion lenses and also does not run in the default audit mode. Each audit lens loops until the agent emits `DONE` three times in a row. That adds up to **hundreds — often thousands — of agent invocations per run**, and cost scales with your model choice (Claude Opus is dramatically more expensive than smaller models or Codex). Real-world runs can easily reach hundreds of dollars on a single repo.
+> A default full audit runs **248 audit-visible lenses across 27 code/toolgate/logs domains**. RepoLens has 337 lenses across 34 domains in total for issue and backlog modes, but `discover`, `deploy`, `opensource`, `content`, `greenfield`, and `spec-change` lenses are mode-specific and do not run in the default audit mode. The separate polish pass has its own 16 suggestion lenses and also does not run in the default audit mode. Each audit lens loops until the agent emits `DONE` three times in a row. That adds up to **hundreds — often thousands — of agent invocations per run**, and cost scales with your model choice (Claude Opus is dramatically more expensive than smaller models or Codex). Real-world runs can easily reach hundreds of dollars on a single repo.
 
 **Before launching a full audit:**
 
@@ -222,7 +222,7 @@ For the full legal text, see [LICENSE](LICENSE) (Apache License, Version 2.0, Se
 
 ## Modes
 
-RepoLens supports 11 modes. Each mode controls which domains/lenses are visible and how the agent iterates. `polish` is a suggestion workflow that writes ranked JSON artifacts and grouped polishing shortlists.
+RepoLens supports 12 modes. Each mode controls which domains/lenses are visible and how the agent iterates. `polish` is a suggestion workflow that writes ranked JSON artifacts and grouped polishing shortlists.
 
 | Mode         | DONE Streak | Domains                                    | Description                                                                   |
 | ------------ | ----------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
@@ -237,6 +237,7 @@ RepoLens supports 11 modes. Each mode controls which domains/lenses are visible 
 | `content`    | 1×          | `content-quality` domain (17 lenses)       | Content audit & creation — audits or creates content from `--source` material |
 | `greenfield` | 1×          | `greenfield` domain (1 lenses)             | Spec-to-backlog planning — requires `--spec`, checks the current open issue or local draft backlog, and creates non-duplicate `[P0]`-`[P3]` implementation issues without inspecting repository code |
 | `polish`     | 1×          | `fluency`, `effort-signal`, and `hedonic` domains (16 lenses) | Ranked polishing shortlists — proposes small, additive craft refinements with voice-fit evidence |
+| `spec-change` | 1×         | `spec-change` domain (1 lenses)            | Spec-diff impact — requires `--spec` (a tracked spec file), diffs it against `--spec-base` (default `HEAD`), and files one impact-prefixed issue per code change the diff implies |
 
 ### Mode Examples
 
@@ -667,7 +668,7 @@ This writes a `.superseded` marker into `logs/<run-id>/` and changes two behavio
 
 The `<run-id>` must be a direct child of `logs/` and a genuine run dir (one carrying `summary.json` or `status.json`). Ids containing `/`, `.`, or `..` are rejected, and superseding a missing or non-run directory exits non-zero with a message.
 
-## Domains & Lenses (336 total across 33 domains)
+## Domains & Lenses (337 total across 34 domains)
 
 ### Code Analysis Domains (used by `audit`, `feature`, `bugfix`, `custom`)
 

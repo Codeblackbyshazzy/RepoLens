@@ -291,6 +291,7 @@ declare -A MODE_DEFAULT_DEPTH=(
   [content]=1
   [greenfield]=1
   [polish]=1
+  [spec-change]=1
 )
 
 declare -A MODE_DEFAULT_ROUNDS=(
@@ -305,6 +306,7 @@ declare -A MODE_DEFAULT_ROUNDS=(
   [content]=1
   [greenfield]=1
   [polish]=1
+  [spec-change]=1
 )
 
 declare -A ROUNDS_CAP_BY_MODE=(
@@ -319,6 +321,7 @@ declare -A ROUNDS_CAP_BY_MODE=(
   [discover]=1
   [greenfield]=1
   [polish]=1
+  [spec-change]=1
 )
 
 mode_default_depth() {
@@ -352,7 +355,7 @@ validate_rounds() {
 agent_timeout_default_for_mode() {
   local mode="$1"
   case "$mode" in
-    audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish) printf '%s\n' 1800 ;;
+    audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish|spec-change) printf '%s\n' 1800 ;;
     *) die "Internal error: unsupported mode '$mode' for timeout default" ;;
   esac
 }

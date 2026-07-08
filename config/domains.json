@@ -687,6 +687,15 @@
         "stimulation-moments",
         "fitting-easter-eggs"
       ]
+    },
+    {
+      "id": "spec-change",
+      "name": "Spec Change Impact",
+      "mode": "spec-change",
+      "order": 37,
+      "lenses": [
+        "spec-change-planning"
+      ]
     }
   ]
 }

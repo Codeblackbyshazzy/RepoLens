@@ -170,7 +170,7 @@ assert_eq "discovery domain mode is 'discover'" "discover" "$mode_val"
 
 echo ""
 echo "Test 14: Non-modal domains have no mode field"
-mode_domains="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id' "$DOMAINS_FILE")"
+mode_domains="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish" and .mode != "spec-change") | .id' "$DOMAINS_FILE")"
 assert_eq "no non-modal domain has mode field" "" "$mode_domains"
 
 echo ""

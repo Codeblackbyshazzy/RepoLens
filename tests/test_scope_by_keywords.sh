@@ -243,7 +243,8 @@ expected_audit_count="$(jq '
   [.domains[]
    | select(.mode != "discover" and .mode != "deploy"
             and .mode != "opensource" and .mode != "content"
-            and .mode != "greenfield" and .mode != "polish")
+            and .mode != "greenfield" and .mode != "polish"
+            and .mode != "spec-change")
    | .lenses | length] | add
 ' "$DOMAINS_FILE")"
 out="$TMPDIR/out-audit.txt"

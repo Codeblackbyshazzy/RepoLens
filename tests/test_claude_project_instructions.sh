@@ -86,8 +86,13 @@ opensource_count="$(jq '[.domains[] | select(.mode == "opensource") | .lenses | 
 content_count="$(jq '[.domains[] | select(.mode == "content") | .lenses | length] | add' "$DOMAINS_FILE")"
 greenfield_count="$(jq '[.domains[] | select(.mode == "greenfield") | .lenses | length] | add' "$DOMAINS_FILE")"
 polish_count="$(jq '[.domains[] | select(.mode == "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
+# spec-change is a planning/impact mode with its own mode-isolated domain (like
+# greenfield and polish); its driver lens is not one of the seven "expert
+# analysis agent" categories in the CLAUDE.md headline breakdown, so it is
+# excluded from the documented analysis-agent total the same way.
+spec_change_count="$(jq '[.domains[] | select(.mode == "spec-change") | .lenses | length] | add' "$DOMAINS_FILE")"
 breakdown_total="$((code_analysis_count + toolgate_count + logs_count + discovery_count + deployment_count + opensource_count + content_count))"
-documented_total="$((total_lenses - greenfield_count - polish_count))"
+documented_total="$((total_lenses - greenfield_count - polish_count - spec_change_count))"
 
 echo ""
 echo "Test 1: CLAUDE.md headline count matches domains.json"

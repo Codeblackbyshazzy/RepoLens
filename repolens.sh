@@ -150,7 +150,7 @@ Commands:
                           hidden from status auto-select, eligible for clean
 
 Options:
-  --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish
+  --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish | spec-change
   --change <statement>    Change impact analysis — propagates statement across all lenses (implies --mode custom)
   --bug-report <file|text>
                           Symptom report for --mode bugreport. Accepts a file path (read verbatim)
@@ -195,7 +195,11 @@ Options:
                           cheap "Radar" agent) with the flagship --agent, drop the
                           false positives, and write a cleaned findings file. Does
                           not run the lens scan. Needs --agent and --project.
-  --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield)
+  --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield / spec-change)
+  --spec-base <ref>       Git base ref/range to diff the --spec file against in
+                          --mode spec-change (default: HEAD — working-tree-vs-HEAD,
+                          i.e. the uncommitted edit). Accepts a ref (HEAD~1) or a
+                          range (HEAD~1..HEAD). Only valid with --mode spec-change.
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
   --min-severity <level>  Only file findings at or above level: critical|high|medium|low
   --depth <n>             DONE streak depth per lens. Defaults: 3 for audit/feature/bugfix,
@@ -446,13 +450,14 @@ EOF
   echo "  greenfield  Spec-to-backlog planning — creates one implementation issue per iteration (requires --spec)"
   echo "  polish      Polish — proposes small, additive craft refinements"
   echo "  bugreport   Symptom-driven investigation — runs lenses on a user bug report (requires --bug-report)"
+  echo "  spec-change Spec-diff impact — derives code changes from a tracked spec's git diff (requires --spec)"
 
   # Parse all domains in one jq call
   local domain_data
   domain_data="$(jq -r '.domains | sort_by(.order)[] | .id + "|" + .name + "|" + (.mode // "code") + "|" + ([.lenses[] | if type == "string" then . else .id end] | join(","))' "$domains_file")"
 
-  local code_total=0 discover_total=0 deploy_total=0 opensource_total=0 content_total=0 greenfield_total=0 polish_total=0
-  local code_output="" discover_output="" deploy_output="" opensource_output="" content_output="" greenfield_output="" polish_output=""
+  local code_total=0 discover_total=0 deploy_total=0 opensource_total=0 content_total=0 greenfield_total=0 polish_total=0 spec_change_total=0
+  local code_output="" discover_output="" deploy_output="" opensource_output="" content_output="" greenfield_output="" polish_output="" spec_change_output=""
 
   while IFS='|' read -r did dname dmode dlenses; do
     IFS=',' read -ra lens_arr <<< "$dlenses"
@@ -483,6 +488,9 @@ EOF
     elif [[ "$dmode" == "polish" ]]; then
       polish_total=$((polish_total + lcount))
       polish_output+="$section"$'\n'
+    elif [[ "$dmode" == "spec-change" ]]; then
+      spec_change_total=$((spec_change_total + lcount))
+      spec_change_output+="$section"$'\n'
     else
       code_total=$((code_total + lcount))
       code_output+="$section"$'\n'
@@ -511,6 +519,9 @@ EOF
   echo "Domains (polish mode — ${polish_total} lenses):"
   echo ""
   printf "%s" "$polish_output"
+  echo "Domains (spec-change mode — ${spec_change_total} lenses):"
+  echo ""
+  printf "%s" "$spec_change_output"
 }
 
 # Dispatch read-only subcommands before normal run validation.
@@ -559,6 +570,8 @@ RESUME_RUN_ID=""
 VALIDATE_INPUT=""
 VALIDATE_MODE=false
 SPEC_FILE=""
+SPEC_BASE="HEAD"
+SPEC_BASE_SET=false
 MAX_ISSUES=""
 MIN_SEVERITY=""
 DEPTH=""
@@ -683,6 +696,12 @@ while [[ $# -gt 0 ]]; do
     --spec)
       [[ $# -ge 2 ]] || die "Option --spec requires a file path argument."
       SPEC_FILE="$2"
+      shift 2
+      ;;
+    --spec-base)
+      [[ $# -ge 2 ]] || die "Option --spec-base requires a git ref/range argument."
+      SPEC_BASE="$2"
+      SPEC_BASE_SET=true
       shift 2
       ;;
     --max-issues)
@@ -884,8 +903,8 @@ fi
 
 # --- Validate mode ---
 case "$MODE" in
-  audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish) ;;
-  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', 'content', 'greenfield', or 'polish')" ;;
+  audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish|spec-change) ;;
+  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', 'content', 'greenfield', 'polish', or 'spec-change')" ;;
 esac
 
 # --- Resolve --strategy (CLI flag wins over REPOLENS_STRATEGY env) ---
@@ -1115,6 +1134,9 @@ EOF
 if $DEPLOY_TARGET_SET && [[ "$MODE" != "deploy" ]]; then
   die "--deploy-target requires --mode deploy"
 fi
+if $SPEC_BASE_SET && [[ "$MODE" != "spec-change" ]]; then
+  die "--spec-base requires --mode spec-change"
+fi
 if [[ -n "$REMOTE_TARGET" && "$MODE" != "deploy" ]]; then
   die "--remote requires --mode deploy"
 fi
@@ -1341,6 +1363,11 @@ fi
 # --- Validate greenfield spec requirement ---
 if [[ "$MODE" == "greenfield" && -z "$SPEC_FILE" ]]; then
   die "Mode 'greenfield' requires --spec <file>"
+fi
+
+# --- Validate spec-change spec requirement ---
+if [[ "$MODE" == "spec-change" && -z "$SPEC_FILE" ]]; then
+  die "Mode 'spec-change' requires --spec <file>"
 fi
 
 # --- Handle remote repository URL ---
@@ -1847,7 +1874,7 @@ if [[ -n "$MIN_SEVERITY" ]]; then
 fi
 MIN_SEVERITY_MODE_EXEMPT=""
 case "$MODE" in
-  discover|feature|custom|greenfield|polish)
+  discover|feature|custom|greenfield|polish|spec-change)
     if [[ -n "$MIN_SEVERITY" ]]; then
       MIN_SEVERITY_MODE_EXEMPT="$MODE"
       MIN_SEVERITY=""
@@ -2042,6 +2069,32 @@ if [[ "$MODE" == "bugreport" ]]; then
   [[ -n "$BUG_REPORT" ]] || die "Mode 'bugreport' could not resolve a bug report (and resume could not recover one from $BUG_REPORT_FILE)"
 fi
 
+# --- Compute / rehydrate the spec diff for spec-change mode ---
+# spec-change derives its work from the git diff of the tracked --spec file
+# against --spec-base (default HEAD = working-tree-vs-HEAD, i.e. the uncommitted
+# edit). The diff is the authoritative change signal: it is computed ONCE here,
+# persisted verbatim to logs/<run-id>/spec-diff.txt so every lens (and every
+# --resume) renders the identical diff, and passed into compose_prompt via the
+# SPEC_DIFF file-backed template var. The spec must be a file tracked by git
+# inside the repo so a diff baseline exists (mirrors the greenfield/custom
+# fail-fast guards). An empty diff is valid — it renders a "no changes" notice
+# and the wrapper terminates early without filing issues.
+SPEC_DIFF_FILE="$LOG_BASE/spec-diff.txt"
+if [[ "$MODE" == "spec-change" ]]; then
+  if [[ -n "$RESUME_RUN_ID" && -f "$SPEC_DIFF_FILE" ]]; then
+    : # Reuse the diff captured at the original run start for reproducibility.
+  else
+    git -C "$PROJECT_PATH" ls-files --error-unmatch -- "$SPEC_FILE" >/dev/null 2>&1 \
+      || die "Mode 'spec-change' requires --spec to be a file tracked by git inside $PROJECT_PATH (so a diff baseline exists): $SPEC_FILE"
+    if ! _spec_diff_output="$(git -C "$PROJECT_PATH" diff "$SPEC_BASE" -- "$SPEC_FILE" 2>/dev/null)"; then
+      die "Mode 'spec-change' could not compute the spec diff against base ref '$SPEC_BASE' — check that it is a valid git ref or range."
+    fi
+    printf '%s' "$_spec_diff_output" > "$SPEC_DIFF_FILE" \
+      || die "Unable to persist spec diff to $SPEC_DIFF_FILE"
+    unset _spec_diff_output
+  fi
+fi
+
 # Path to the round-0 triage context pack. Populated by run_triage when
 # --no-triage is off in bugreport mode; substituted into round-1 lens prompts
 # via the {{TRIAGE_CONTEXT_PACK}} slot. When the file is absent (other modes,
@@ -2233,6 +2286,7 @@ run_remote_preflight() {
 [[ "$MODE" == "content" ]] && log_info "Content mode: content audit & creation (DONE streak: 1)"
 [[ "$MODE" == "greenfield" ]] && log_info "Greenfield mode: spec-to-backlog planning (DONE streak: 1)"
 [[ "$MODE" == "polish" ]] && log_info "Polish mode: single-pass polishing (DONE streak: 1)"
+[[ "$MODE" == "spec-change" ]] && log_info "Spec-change mode: spec-diff impact analysis vs base '$SPEC_BASE' (DONE streak: 1)"
 POLISH_SURFACE=""
 if [[ "$MODE" == "polish" ]]; then
   POLISH_SURFACE="$(detect_polish_surface "$PROJECT_PATH")"
@@ -2282,6 +2336,8 @@ resolve_lenses() {
             ($polish_surface == "")
             or ((.polish_surfaces // ["visual-ui", "cli-backend"]) | index($polish_surface))
           )
+      elif $mode == "spec-change" then
+        select(.mode == "spec-change")
       else
         select(
           .mode != "discover"
@@ -2290,6 +2346,7 @@ resolve_lenses() {
           and .mode != "content"
           and .mode != "greenfield"
           and .mode != "polish"
+          and .mode != "spec-change"
         )
       end;
   '
@@ -3266,6 +3323,7 @@ ensure_labels() {
     content)     label_prefix="content" ;;
     greenfield)  label_prefix="greenfield" ;;
     polish)      label_prefix="polish" ;;
+    spec-change) label_prefix="change" ;;
   esac
 
   local label_set_file
@@ -3412,6 +3470,7 @@ run_lens() {
     content)     label_prefix="content" ;;
     greenfield)  label_prefix="greenfield" ;;
     polish)      label_prefix="polish" ;;
+    spec-change) label_prefix="change" ;;
   esac
   lens_label="${label_prefix}:${domain}/${lens_id}"
 
@@ -3456,6 +3515,9 @@ run_lens() {
     fi
   fi
   [[ -n "$CHANGE_STATEMENT" ]] && vars+="|CHANGE_STATEMENT=${CHANGE_STATEMENT}"
+  if [[ "$MODE" == "spec-change" && -f "$SPEC_DIFF_FILE" ]]; then
+    vars+="|SPEC_DIFF=@${SPEC_DIFF_FILE}"
+  fi
   if [[ "$MODE" == "bugreport" && -f "$BUG_REPORT_FILE" ]]; then
     vars+="|BUG_REPORT=@${BUG_REPORT_FILE}"
   fi

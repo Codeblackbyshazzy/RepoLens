@@ -425,7 +425,7 @@ assert_contains "contains toolgate lens count ($toolgate_count)" "$toolgate_coun
 
 echo ""
 echo "Test 46: Code analysis lens count matches codebase"
-code_analysis_count="$(jq '[.domains[] | select(.mode == null or (.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish")) | select(.id != "toolgate") | .lenses | length] | add' "$DOMAINS_FILE")"
+code_analysis_count="$(jq '[.domains[] | select(.mode == null or (.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish" and .mode != "spec-change")) | select(.id != "toolgate") | .lenses | length] | add' "$DOMAINS_FILE")"
 assert_contains "contains code analysis lens count ($code_analysis_count)" "$code_analysis_count code analysis" "$methodology_content"
 
 echo ""

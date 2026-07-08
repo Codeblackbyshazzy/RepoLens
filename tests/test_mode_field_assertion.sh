@@ -153,13 +153,13 @@ else
 fi
 
 # =====================================================================
-# Contract 4: domains.json has exactly 9 mode-bearing domains
+# Contract 4: domains.json has exactly 10 mode-bearing domains
 # =====================================================================
 
 echo ""
-echo "Test 10: domains.json has exactly 9 mode-bearing domains"
+echo "Test 10: domains.json has exactly 10 mode-bearing domains"
 mode_count="$(jq '[.domains[] | select(.mode != null)] | length' "$DOMAINS_FILE")"
-assert_eq "9 domains have mode fields" "9" "$mode_count"
+assert_eq "10 domains have mode fields" "10" "$mode_count"
 
 echo ""
 echo "Test 11: discovery domain has mode 'discover'"
@@ -201,15 +201,20 @@ echo "Test 14e: hedonic domain has mode 'polish'"
 mode_val="$(jq -r '.domains[] | select(.id == "hedonic") | .mode' "$DOMAINS_FILE")"
 assert_eq "hedonic mode is polish" "polish" "$mode_val"
 
+echo ""
+echo "Test 14f: spec-change domain has mode 'spec-change'"
+mode_val="$(jq -r '.domains[] | select(.id == "spec-change") | .mode' "$DOMAINS_FILE")"
+assert_eq "spec-change mode is spec-change" "spec-change" "$mode_val"
+
 # =====================================================================
 # Contract 5: No unexpected mode fields on standard domains
 # =====================================================================
 
 echo ""
 echo "Test 15: No domain has an unexpected mode value"
-# The only valid mode values are: discover, deploy, opensource, content, greenfield, polish
+# The only valid mode values are: discover, deploy, opensource, content, greenfield, polish, spec-change
 # Any domain with a mode field not in this set is a bug
-unexpected_modes="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") | .id + "=" + .mode' "$DOMAINS_FILE")"
+unexpected_modes="$(jq -r '.domains[] | select(.mode != null) | select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish" and .mode != "spec-change") | .id + "=" + .mode' "$DOMAINS_FILE")"
 assert_eq "no unexpected mode values" "" "$unexpected_modes"
 
 echo ""
