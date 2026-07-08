@@ -41,6 +41,11 @@
       "label": "opencode (Sonnet-class assumed)",
       "input_per_mtok": 3.00,
       "output_per_mtok": 15.00
+    },
+    "gemini-2.5-pro": {
+      "label": "Gemini 2.5 Pro",
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.00
     }
   },
   "agent_default_model": {
@@ -48,7 +53,8 @@
     "codex": "gpt-5",
     "spark": "spark",
     "sparc": "spark",
-    "opencode": "opencode-default"
+    "opencode": "opencode-default",
+    "gemini": "gemini-2.5-pro"
   },
   "session_model": {
     "_comment": "Assumptions used by the estimator. All values are per-session (one agent iteration).",

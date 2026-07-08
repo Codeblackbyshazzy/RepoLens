@@ -253,11 +253,11 @@ require_cmd() {
 validate_agent() {
   local agent="$1"
   case "$agent" in
-    claude|codex|spark|sparc|opencode) ;;
+    claude|codex|spark|sparc|opencode|gemini) ;;
     opencode/*)
       [[ -n "${agent#opencode/}" ]] || die "Invalid agent: $agent (missing model after 'opencode/')."
       ;;
-    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, opencode, or opencode/<model>)" ;;
+    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, opencode, opencode/<model>, or gemini)" ;;
   esac
 }
 
@@ -271,6 +271,7 @@ require_agent_cmd() {
     claude) require_cmd claude ;;
     codex|spark|sparc) require_cmd codex ;;
     opencode|opencode/*) require_cmd opencode ;;
+    gemini) require_cmd gemini ;;
     *) die "Internal error: unsupported agent '$agent' for command check" ;;
   esac
 }
@@ -375,6 +376,7 @@ resolve_agent_timeout() {
     spark) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARK REPOLENS_AGENT_TIMEOUT_SPARC) ;;
     sparc) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARC REPOLENS_AGENT_TIMEOUT_SPARK) ;;
     opencode|opencode/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_OPENCODE) ;;
+    gemini) agent_vars=(REPOLENS_AGENT_TIMEOUT_GEMINI) ;;
     "") ;;
     *) ;;
   esac
@@ -483,6 +485,9 @@ run_agent() {
       opencode/*)
         local opencode_model="${agent#opencode/}"
         timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" opencode run -m "$opencode_model" "$prompt"
+        ;;
+      gemini)
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" gemini --yolo -p "$prompt"
         ;;
       *)
         die "Internal error: unsupported agent '$agent'"
