@@ -261,6 +261,20 @@ validate_agent() {
   esac
 }
 
+# Map an agent value to its underlying CLI binary and require that binary.
+# Centralizes the agent->binary mapping so the global --agent and every
+# --agent-override target (issue #380) share one require_cmd code path — a
+# typo'd or uninstalled override agent then fails at startup, not 200 lenses in.
+require_agent_cmd() {
+  local agent="$1"
+  case "$agent" in
+    claude) require_cmd claude ;;
+    codex|spark|sparc) require_cmd codex ;;
+    opencode|opencode/*) require_cmd opencode ;;
+    *) die "Internal error: unsupported agent '$agent' for command check" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Agent runner
 # ---------------------------------------------------------------------------

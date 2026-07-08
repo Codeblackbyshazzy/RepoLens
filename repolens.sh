@@ -167,6 +167,14 @@ Options:
                           Intersects with the mode-filtered lens list. Bypassed
                           when --focus or --domain is set (those win).
                           Example: --relevant-domains concurrency,database
+  --agent-override <csv>  Route specific domains or lenses to a different agent
+                          than the global --agent (cost vs. logic optimization).
+                          Comma-separated key=agent pairs. Keys are a domain id
+                          or a fully-qualified domain/lens (lens ids are not
+                          globally unique, so lens scope requires domain/lens).
+                          Precedence: domain/lens > domain > global --agent.
+                          Example: --agent opencode \
+                                   --agent-override security=claude,architecture=claude,information-architecture/empty-states=claude
   --scope-by-keywords     Deterministic, LLM-free pruning: substring-match the
                           bug-report text against each domain's "keywords" field
                           in config/domains.json (case-insensitive). Domains
@@ -531,6 +539,12 @@ fi
 # --- Argument parsing ---
 PROJECT_PATH=""
 AGENT=""
+# Issue #380: per-domain / per-lens agent routing. AGENT_OVERRIDE_CSV holds the
+# raw --agent-override CSV (accumulated across repeated flags); AGENT_OVERRIDES
+# is the validated key->agent map (domain or domain/lens key), populated by
+# validate_agent_overrides once domains.json is available.
+AGENT_OVERRIDE_CSV=""
+declare -A AGENT_OVERRIDES=()
 MODE="audit"
 FOCUS=""
 DOMAIN_FILTER=""
@@ -599,6 +613,12 @@ while [[ $# -gt 0 ]]; do
     --agent)
       [[ $# -ge 2 ]] || die "Option --agent requires an argument."
       AGENT="$2"
+      shift 2
+      ;;
+    --agent-override)
+      [[ $# -ge 2 ]] || die "Option --agent-override requires a comma-separated key=agent argument."
+      # Accumulate across repeated flags; validated later in validate_agent_overrides.
+      AGENT_OVERRIDE_CSV="${AGENT_OVERRIDE_CSV:+$AGENT_OVERRIDE_CSV,}$2"
       shift 2
       ;;
     --mode)
@@ -1924,11 +1944,7 @@ require_cmd git
 require_cmd jq
 require_cmd timeout
 
-case "$AGENT" in
-  claude) require_cmd claude ;;
-  codex|spark|sparc) require_cmd codex ;;
-  opencode|opencode/*) require_cmd opencode ;;
-esac
+require_agent_cmd "$AGENT"
 
 # --- Resolve and validate forge provider ---
 if [[ -n "$FORGE_PROVIDER" ]]; then
@@ -2074,6 +2090,94 @@ fi
 # --- Validate config files exist ---
 [[ -f "$DOMAINS_FILE" ]] || die "Missing config: $DOMAINS_FILE"
 [[ -f "$COLORS_FILE" ]] || die "Missing config: $COLORS_FILE"
+
+# resolve_effective_agent <domain> <lens_id> — return the agent that should run
+# this lens. Precedence: fully-qualified lens key (domain/lens) > domain key >
+# global $AGENT. Reads the AGENT_OVERRIDES map populated by
+# validate_agent_overrides; with no overrides it always returns $AGENT, so the
+# no-override path is byte-for-byte unchanged (issue #380).
+resolve_effective_agent() {
+  local domain="$1" lens_id="$2"
+  local lens_key="$domain/$lens_id"
+  if [[ -n "${AGENT_OVERRIDES[$lens_key]:-}" ]]; then
+    printf '%s\n' "${AGENT_OVERRIDES[$lens_key]}"
+  elif [[ -n "${AGENT_OVERRIDES[$domain]:-}" ]]; then
+    printf '%s\n' "${AGENT_OVERRIDES[$domain]}"
+  else
+    printf '%s\n' "$AGENT"
+  fi
+}
+
+# overrides_active — true when at least one --agent-override pair is in effect.
+overrides_active() {
+  [[ "${#AGENT_OVERRIDES[@]}" -gt 0 ]]
+}
+
+# validate_agent_overrides — parse AGENT_OVERRIDE_CSV, validate every pair up
+# front (fail fast, before any lens runs), and populate AGENT_OVERRIDES. Each
+# pair is key=agent split on the FIRST '=' only so opencode/<model> values
+# survive. The agent value goes through the same validate_agent allow-list and
+# require_agent_cmd binary check as the global --agent. The key must be a known
+# domain id or a fully-qualified domain/lens tuple from domains.json; a bare
+# lens id (ambiguous — lens ids are not globally unique) or an unknown key is
+# rejected loudly so a typo never silently no-ops the routing the operator asked
+# for.
+validate_agent_overrides() {
+  [[ -n "$AGENT_OVERRIDE_CSV" ]] || return 0
+
+  local -A _known_domains=() _known_tuples=() _known_lens_ids=()
+  local _row
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_domains["$_row"]=1
+  done < <(jq -r '.domains[].id' "$DOMAINS_FILE")
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_tuples["$_row"]=1
+  done < <(jq -r '.domains[] | .id as $d | .lenses[]
+                  | (if type == "string" then . else .id end)
+                  | "\($d)/\(.)"' "$DOMAINS_FILE")
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_lens_ids["$_row"]=1
+  done < <(jq -r '.domains[].lenses[] | (if type == "string" then . else .id end)' "$DOMAINS_FILE")
+
+  local -a _pairs=()
+  IFS=',' read -ra _pairs <<< "$AGENT_OVERRIDE_CSV"
+  local _pair _key _val
+  for _pair in "${_pairs[@]}"; do
+    # Trim surrounding whitespace.
+    _pair="${_pair#"${_pair%%[![:space:]]*}"}"
+    _pair="${_pair%"${_pair##*[![:space:]]}"}"
+    [[ -z "$_pair" ]] && continue
+    [[ "$_pair" == *=* ]] || die "--agent-override: '$_pair' is not in key=agent form"
+    # Split on the FIRST '=' only so opencode/<model> values are preserved.
+    _key="${_pair%%=*}"
+    _val="${_pair#*=}"
+    _key="${_key#"${_key%%[![:space:]]*}"}"; _key="${_key%"${_key##*[![:space:]]}"}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"; _val="${_val%"${_val##*[![:space:]]}"}"
+    [[ -n "$_key" ]] || die "--agent-override: empty override key in '$_pair'"
+    [[ -n "$_val" ]] || die "--agent-override: empty agent for override key '$_key'"
+
+    # Validate the agent value against the same allow-list + binary check the
+    # global --agent uses. validate_agent names the offending value on failure.
+    validate_agent "$_val"
+    require_agent_cmd "$_val"
+
+    # Validate the key. A '/' means a fully-qualified lens key.
+    if [[ "$_key" == */* ]]; then
+      [[ -n "${_known_tuples[$_key]:-}" ]] \
+        || die "--agent-override: unknown domain/lens key '$_key' (no such lens in $DOMAINS_FILE)"
+    elif [[ -n "${_known_domains[$_key]:-}" ]]; then
+      :
+    elif [[ -n "${_known_lens_ids[$_key]:-}" ]]; then
+      die "--agent-override: bare lens key '$_key' is ambiguous (lens ids are not unique across domains); use the fully-qualified domain/lens form"
+    else
+      die "--agent-override: unknown override key '$_key' (expected a domain id or domain/lens from $DOMAINS_FILE)"
+    fi
+
+    AGENT_OVERRIDES["$_key"]="$_val"
+  done
+}
+
+validate_agent_overrides
 # Resolve the base wrapper file once at startup. The pure resolver
 # returns the canonical mapping (deploy/android -> android.md, else
 # <MODE>.md); we then fall back to deploy.md when the canonical file is
@@ -2768,6 +2872,49 @@ compute_cost_breakdown() {
       }'
 }
 
+# Cost breakdown for a routed run (issue #380). When --agent-override sends some
+# lenses to a pricier/cheaper model, a single-model estimate silently misprices
+# the exact budgeting use case this feature serves. Partition LENS_LIST by
+# effective agent, price each group with the shared compute_cost_breakdown, and
+# emit a combined total. Output shape matches compute_cost_breakdown: a first
+# MIN_COST=<total> line (callers extract it) followed by human-readable lines.
+compute_cost_breakdown_routed() {
+  local streak="$1" path="$2" pricing_file="$3" rounds="$4"
+
+  local -A _agent_counts=()
+  local _entry _dom _lid _eff
+  for _entry in "${LENS_LIST[@]}"; do
+    _dom="${_entry%%/*}"
+    _lid="${_entry#*/}"
+    _eff="$(resolve_effective_agent "$_dom" "$_lid")"
+    _agent_counts["$_eff"]=$(( ${_agent_counts["$_eff"]:-0} + 1 ))
+  done
+
+  local _total="0.00" _lines="" _a _cnt _sub _sub_min _sub_lines
+  for _a in "${!_agent_counts[@]}"; do
+    _cnt="${_agent_counts[$_a]}"
+    _sub="$(compute_cost_breakdown "$_a" "$_cnt" "$streak" "$path" "$pricing_file" "$rounds")"
+    _sub_min="$(printf '%s\n' "$_sub" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+    _sub_lines="$(printf '%s\n' "$_sub" | grep -v '^MIN_COST=')"
+    _total="$(awk -v a="$_total" -v b="${_sub_min:-0}" 'BEGIN { printf "%.2f", a + b }')"
+    _lines+="  agent '$_a' — ${_cnt} lens(es):"$'\n'"$_sub_lines"$'\n'
+  done
+
+  printf 'MIN_COST=%s\n' "$_total"
+  printf '%s' "$_lines"
+}
+
+# Print the active --agent-override routing map (one 'key -> agent' per line),
+# sorted for stable output. No-op when no overrides are set.
+print_agent_override_map() {
+  overrides_active || return 0
+  local _k
+  echo "Agent overrides:"
+  while IFS= read -r _k; do
+    [[ -n "$_k" ]] && echo "  $_k -> ${AGENT_OVERRIDES[$_k]}"
+  done < <(printf '%s\n' "${!AGENT_OVERRIDES[@]}" | sort)
+}
+
 # --- Confirmation gate ---
 print_android_deploy_preview() {
   [[ "${TARGET_TYPE:-server}" == "android" ]] || return 0
@@ -2891,7 +3038,11 @@ confirm_run() {
   local pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
   check_pricing_freshness "$pricing_file"
   local breakdown min_cost
-  breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+  if overrides_active; then
+    breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+  else
+    breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+  fi
   min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
   local breakdown_lines
   breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
@@ -2902,6 +3053,7 @@ confirm_run() {
   print_remote_confirmation_context
   echo "Mode:         $MODE"
   echo "Agent:        $AGENT"
+  print_agent_override_map
   echo "Lenses:       $TOTAL_LENSES"
   if [[ -n "$MAX_ISSUES" ]]; then
     echo "Max issues:   $MAX_ISSUES"
@@ -3026,6 +3178,7 @@ if $DRY_RUN; then
   echo "=== Dry Run ==="
   echo "Mode:         $MODE"
   echo "Agent:        $AGENT"
+  print_agent_override_map
   echo "Project:      $PROJECT_PATH"
   echo "Rounds:      $ROUNDS"
   if [[ "$MODE" == "bugreport" ]]; then
@@ -3048,7 +3201,11 @@ if $DRY_RUN; then
     _dry_pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
     if [[ -f "$_dry_pricing_file" ]]; then
       check_pricing_freshness "$_dry_pricing_file"
-      _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+      if overrides_active; then
+        _dry_breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+      else
+        _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+      fi
       _dry_min_cost="$(printf "%s\n" "$_dry_breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
       _dry_breakdown_lines="$(printf "%s\n" "$_dry_breakdown" | grep -v '^MIN_COST=')"
       echo "Estimated cost: ~\$${_dry_min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
@@ -3216,6 +3373,21 @@ run_lens() {
   if is_lens_completed "$lens_entry"; then
     log_info "[$domain/$lens_id] Skipping (already completed in previous run)"
     return 0
+  fi
+
+  # Issue #380: resolve the effective agent for this lens (domain/lens > domain >
+  # global --agent) and its per-agent timeout. Different agents can carry
+  # different REPOLENS_AGENT_TIMEOUT_* budgets, so resolve the timeout for the
+  # agent that will actually run rather than reusing the global default.
+  local effective_agent effective_agent_timeout_secs
+  effective_agent="$(resolve_effective_agent "$domain" "$lens_id")"
+  effective_agent_timeout_secs="$(resolve_agent_timeout "$MODE" "$effective_agent")"
+  if [[ ! "$effective_agent_timeout_secs" =~ ^[1-9][0-9]*$ ]]; then
+    effective_agent_timeout_secs="$AGENT_TIMEOUT_SECS"
+  fi
+  effective_agent_timeout_secs=$((10#$effective_agent_timeout_secs))
+  if [[ "$effective_agent" != "$AGENT" ]]; then
+    log_info "[$domain/$lens_id] Routed to agent '$effective_agent' via --agent-override (global: $AGENT)"
   fi
 
   # Read lens metadata
@@ -3409,7 +3581,7 @@ run_lens() {
     fi
 
     local agent_rc=0
-    local effective_timeout_secs="$AGENT_TIMEOUT_SECS"
+    local effective_timeout_secs="$effective_agent_timeout_secs"
     if (( remaining_wall_secs < effective_timeout_secs )); then
       effective_timeout_secs="$remaining_wall_secs"
     fi
@@ -3426,7 +3598,7 @@ run_lens() {
       fi
     fi
 
-    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
+    run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
     if [[ -s "$envelope_file" && "$output_envelope_file" != "$envelope_file" ]]; then
       mkdir -p "$(dirname "$output_envelope_file")" 2>/dev/null || true
       cp "$envelope_file" "$output_envelope_file" 2>/dev/null || true
