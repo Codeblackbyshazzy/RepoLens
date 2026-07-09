@@ -278,7 +278,7 @@ To contribute to RepoLens, you need:
 - **Bash 4.0+** — the shell runtime
 - **jq** — for JSON processing
 - **git** — for repository operations
-- At least one supported **agent CLI** (`claude`, `codex`, `opencode`, `sparc`, or `gemini`)
+- At least one supported **agent CLI** (`claude`, `codex`, `opencode`, `sparc`, or `antigravity`)
 
 ## Code of Conduct
 

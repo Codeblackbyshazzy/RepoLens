@@ -141,7 +141,7 @@ any git repository and creates remote issues for real findings.
 
 Required:
   --project <path|url>    Local path or remote Git URL (cloned read-only if URL)
-  --agent <agent>         claude | codex | spark | sparc | opencode | opencode/<model> | gemini
+  --agent <agent>         claude | codex | spark | sparc | opencode | opencode/<model> | antigravity
 
 Commands:
   status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
@@ -302,10 +302,10 @@ Environment:
   REPOLENS_AGENT_TIMEOUT_SPARC
                            SPARC alias timeout override; also applies to spark
                            when SPARK is unset.
-  REPOLENS_AGENT_TIMEOUT_GEMINI
-                           Gemini per-invocation timeout override; wins over
+  REPOLENS_AGENT_TIMEOUT_ANTIGRAVITY
+                           Antigravity per-invocation timeout override; wins over
                            REPOLENS_AGENT_TIMEOUT and the mode-specific timeouts
-                           when --agent gemini is selected.
+                           when --agent antigravity is selected.
   REPOLENS_AGENT_TIMEOUT_AUDIT
                            Audit default: 1800.
   REPOLENS_AGENT_TIMEOUT_FEATURE
@@ -2823,7 +2823,7 @@ run_lens_heartbeat_exit_trap() {
 
 # --- Cost estimation (token-based, model-aware, repo-size-aware) ---
 # Resolve an --agent value to a model id in agent-pricing.json.
-# Handles: claude, codex, spark, sparc, opencode, opencode/<model>, gemini.
+# Handles: claude, codex, spark, sparc, opencode, opencode/<model>, antigravity.
 # Unknown opencode/<model> falls back to "opencode-default".
 resolve_agent_model() {
   local agent="$1" pricing_file="$2"
