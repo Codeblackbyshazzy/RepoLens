@@ -240,6 +240,10 @@ Options:
   --build-android-apk     In deploy mode, explicitly allow building Android source with ./gradlew assembleDebug
   --yes, -y               Skip confirmation prompt (for CI/automation)
   --max-cost <amount>     Warn if min. cost estimate exceeds this dollar amount (real cost typically 2–5x higher)
+  --flat-rate             Flat-rate / subscription costing (or REPOLENS_FLAT_RATE=true):
+                          show $0.00 marginal cost and expected request/quota
+                          consumption instead of a per-token dollar estimate
+                          (Claude Pro / ChatGPT Plus / Gemini Advanced / free tiers)
   --i-know-this-is-expensive
                           Acknowledge high --rounds cost. Bypasses the
                           rounds>=4 abort gate (which otherwise demands
@@ -609,6 +613,14 @@ MAX_COST=""
 EXPENSIVE_ACK=false
 DRY_RUN=false
 LOCAL_MODE=false
+# Flat-rate / subscription costing (issue #384): marginal per-token cost is $0
+# for Claude Pro / ChatGPT Plus / Gemini Advanced / free-tier users, so the
+# estimator shows expected request/quota consumption instead of a dollar figure.
+# Seed from the env var (true/1/yes); the --flat-rate flag can also enable it.
+case "${REPOLENS_FLAT_RATE:-}" in
+  true|1|yes|TRUE|YES) FLAT_RATE=true ;;
+  *) FLAT_RATE=false ;;
+esac
 DEPLOY_TARGET="auto"
 DEPLOY_TARGET_SET=false
 BUILD_ANDROID_APK=false
@@ -849,6 +861,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --flat-rate)
+      FLAT_RATE=true
       shift
       ;;
     --max-cost)
@@ -2823,19 +2839,47 @@ run_lens_heartbeat_exit_trap() {
 
 # --- Cost estimation (token-based, model-aware, repo-size-aware) ---
 # Resolve an --agent value to a model id in agent-pricing.json.
-# Handles: claude, codex, spark, sparc, opencode, opencode/<model>, antigravity.
-# Unknown opencode/<model> falls back to "opencode-default".
+# Handles: claude, codex, spark, sparc, opencode, antigravity, and the
+# <agent>/<model> forms claude/, codex/, opencode/, antigravity/ (issue #384).
+# For a slashed agent: an explicit id in models{} is priced directly; otherwise
+# a keyword heuristic buckets the model name into a generic-{flash,pro,premium}
+# class so a brand-new model name is approximated instead of falling back to an
+# arbitrary high default. opencode/<model> keeps its historical opencode-default
+# fallback. Bare agents resolve via agent_default_model.
 resolve_agent_model() {
   local agent="$1" pricing_file="$2"
-  local default_model model_check
-  if [[ "$agent" == opencode/* ]]; then
-    local requested="${agent#opencode/}"
+  local default_model model_check requested req_lower
+  if [[ "$agent" == */* ]]; then
+    requested="${agent#*/}"
+    # Explicit id wins over the keyword heuristic, so a known model is priced
+    # exactly rather than mis-bucketed by an unlucky substring in its name.
     model_check="$(jq -r --arg m "$requested" '.models[$m] | .input_per_mtok // empty' "$pricing_file" 2>/dev/null)"
     if [[ -n "$model_check" ]]; then
       echo "$requested"
       return
     fi
-    echo "opencode-default"
+    # opencode retains its single documented fallback for unknown models.
+    if [[ "$agent" == opencode/* ]]; then
+      echo "opencode-default"
+      return
+    fi
+    # Keyword heuristic for the native agents. Cheap keywords are checked BEFORE
+    # premium so a name like *-flash-preview lands in the cheap bucket, not the
+    # premium one 'preview' would otherwise imply. Match case-insensitively.
+    # 'mini' is boundary-anchored (start-of-string or preceded by a delimiter) so
+    # the substring in "geMINI" no longer buckets every Gemini model as cheap,
+    # while o3-mini / gpt-4o-mini still match. A trailing-delimiter form (*mini-*)
+    # would NOT help: "gemini-3-pro" contains "mini-", so it must stay leading-only.
+    req_lower="$(printf '%s' "$requested" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$req_lower" == *flash* || "$req_lower" == *haiku* \
+          || "$req_lower" == mini* || "$req_lower" == *-mini* || "$req_lower" == *_mini* || "$req_lower" == *.mini* \
+          || "$req_lower" == *8b* || "$req_lower" == *lite* || "$req_lower" == *nano* ]]; then
+      echo "generic-flash-default"
+    elif [[ "$req_lower" == *opus* || "$req_lower" == *ultra* || "$req_lower" == *preview* ]]; then
+      echo "generic-premium-default"
+    else
+      echo "generic-pro-default"
+    fi
     return
   fi
   default_model="$(jq -r --arg a "$agent" '.agent_default_model[$a] // empty' "$pricing_file" 2>/dev/null)"
@@ -2963,6 +3007,56 @@ compute_cost_breakdown_routed() {
 
   printf 'MIN_COST=%s\n' "$_total"
   printf '%s' "$_lines"
+}
+
+# Flat-rate / subscription cost view (issue #384). For Claude Pro / ChatGPT Plus
+# / Gemini Advanced / free-tier users the marginal per-token cost is $0.00, so a
+# dollar estimate is misleading. This renders "$0.00" plus the expected request
+# count (the same lenses x avg_iters x rounds the token estimate uses) and the
+# quota/rate-limit consumption to weigh against a subscription cap or free-tier
+# budget. Reads TOTAL_LENSES, DONE_STREAK_REQUIRED, ROUNDS, PROJECT_PATH.
+print_flat_rate_cost() {
+  local pricing_file="$1"
+  local iter_factor base_prompt input_cap out_per bytes_per_tok
+  iter_factor="$(jq -r '.session_model.iteration_factor // 1.7' "$pricing_file" 2>/dev/null)"
+  base_prompt="$(jq -r '.session_model.base_prompt_tokens // 3000' "$pricing_file" 2>/dev/null)"
+  input_cap="$(jq -r '.session_model.per_session_input_cap_tokens // 200000' "$pricing_file" 2>/dev/null)"
+  out_per="$(jq -r '.session_model.per_session_output_tokens // 8000' "$pricing_file" 2>/dev/null)"
+  bytes_per_tok="$(jq -r '.session_model.bytes_per_token // 4' "$pricing_file" 2>/dev/null)"
+  # set -u-safe fallbacks: a malformed/absent value must not abort the estimate.
+  [[ "$iter_factor" =~ ^[0-9]+(\.[0-9]+)?$ ]] || iter_factor="1.7"
+  [[ "$base_prompt" =~ ^[0-9]+$ ]] || base_prompt=3000
+  [[ "$input_cap" =~ ^[0-9]+$ ]] || input_cap=200000
+  [[ "$out_per" =~ ^[0-9]+$ ]] || out_per=8000
+  [[ "$bytes_per_tok" =~ ^[1-9][0-9]*$ ]] || bytes_per_tok=4
+
+  local repo_bytes
+  repo_bytes="$(estimate_repo_bytes "$PROJECT_PATH")"
+
+  awk -v lenses="$TOTAL_LENSES" -v streak="$DONE_STREAK_REQUIRED" -v rounds="$ROUNDS" \
+      -v iter_factor="$iter_factor" -v base_prompt="$base_prompt" \
+      -v input_cap="$input_cap" -v out_per="$out_per" \
+      -v repo_bytes="$repo_bytes" -v bytes_per_tok="$bytes_per_tok" \
+      'BEGIN {
+        if (rounds < 1) rounds = 1
+        avg_iters = streak * iter_factor
+        requests = lenses * avg_iters * rounds
+        if (requests < 1) requests = 1
+        repo_tokens = int(repo_bytes / bytes_per_tok)
+        session_input = (repo_tokens < input_cap ? repo_tokens : input_cap) + base_prompt
+
+        printf "Estimated cost: ~$0.00 (Flat-Rate / Subscription / Free Tier)\n"
+        printf "  Total expected requests: ~%.0f LLM calls  (%d lenses x ~%.1f iterations x %d round(s))\n", requests, lenses, avg_iters, rounds
+        printf "  - Consumes your plan message/rate quota, not a per-token bill. Weigh ~%.0f calls against:\n", requests
+        printf "      a typical 3-hour subscription cap (e.g. Claude Pro / Gemini Advanced, ~45-50 messages), or\n"
+        printf "      a free-tier rate budget (e.g. Google AI Studio 15 RPM / 1500 RPD).\n"
+        printf "  - Pace or split large runs so you do not lock yourself out of your plan mid-audit.\n"
+        if (session_input >= 1000) {
+          printf "  Total expected tokens: ~%.0fk input + ~%d output per session\n", session_input/1000.0, out_per
+        } else {
+          printf "  Total expected tokens: ~%d input + ~%d output per session\n", session_input, out_per
+        }
+      }'
 }
 
 # Print the active --agent-override routing map (one 'key -> agent' per line),
@@ -3098,15 +3192,21 @@ confirm_run() {
 
   local pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
   check_pricing_freshness "$pricing_file"
-  local breakdown min_cost
-  if overrides_active; then
-    breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+  local breakdown min_cost breakdown_lines
+  # Flat-rate mode ($0 marginal cost) skips the per-token breakdown entirely and
+  # renders the request/quota view instead. min_cost stays "0.00" so the
+  # --max-cost guardrail below is inert (0 never exceeds any threshold).
+  if ! $FLAT_RATE; then
+    if overrides_active; then
+      breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+    else
+      breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+    fi
+    min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+    breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
   else
-    breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+    min_cost="0.00"
   fi
-  min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
-  local breakdown_lines
-  breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
 
   echo ""
   echo "=== RepoLens Confirmation ==="
@@ -3122,11 +3222,15 @@ confirm_run() {
     echo "Max issues:   (unlimited)"
   fi
   echo ""
-  echo "Estimated cost: ~\$${min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
-  printf "%s\n" "$breakdown_lines"
-  echo "  Note: Estimator assumes one model per agent, 4 bytes/token, and a"
-  echo "  capped per-session input budget. Tool-call churn and iteration"
-  echo "  non-convergence push real cost higher. Budget accordingly."
+  if $FLAT_RATE; then
+    print_flat_rate_cost "$pricing_file"
+  else
+    echo "Estimated cost: ~\$${min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
+    printf "%s\n" "$breakdown_lines"
+    echo "  Note: Estimator assumes one model per agent, 4 bytes/token, and a"
+    echo "  capped per-session input budget. Tool-call churn and iteration"
+    echo "  non-convergence push real cost higher. Budget accordingly."
+  fi
   print_wall_estimate
 
   # Threshold warning
@@ -3194,7 +3298,7 @@ confirm_deploy_authorization() {
 
 # --- Autonomous mode gate (claude-only) ---
 confirm_autonomous_mode() {
-  [[ "$AGENT" == "claude" ]] || return 0
+  [[ "$AGENT" == "claude" || "$AGENT" == claude/* ]] || return 0
 
   if $AUTO_YES; then
     return 0
@@ -3262,16 +3366,22 @@ if $DRY_RUN; then
     _dry_pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
     if [[ -f "$_dry_pricing_file" ]]; then
       check_pricing_freshness "$_dry_pricing_file"
-      if overrides_active; then
-        _dry_breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+      if $FLAT_RATE; then
+        # Flat-rate: $0 marginal cost + request/quota consumption (issue #384).
+        print_flat_rate_cost "$_dry_pricing_file"
+        unset _dry_pricing_file
       else
-        _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+        if overrides_active; then
+          _dry_breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+        else
+          _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+        fi
+        _dry_min_cost="$(printf "%s\n" "$_dry_breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+        _dry_breakdown_lines="$(printf "%s\n" "$_dry_breakdown" | grep -v '^MIN_COST=')"
+        echo "Estimated cost: ~\$${_dry_min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
+        printf "%s\n" "$_dry_breakdown_lines"
+        unset _dry_pricing_file _dry_breakdown _dry_min_cost _dry_breakdown_lines
       fi
-      _dry_min_cost="$(printf "%s\n" "$_dry_breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
-      _dry_breakdown_lines="$(printf "%s\n" "$_dry_breakdown" | grep -v '^MIN_COST=')"
-      echo "Estimated cost: ~\$${_dry_min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
-      printf "%s\n" "$_dry_breakdown_lines"
-      unset _dry_pricing_file _dry_breakdown _dry_min_cost _dry_breakdown_lines
     fi
     # The wall-clock estimate needs no pricing data, so emit it whenever lenses
     # are queued — even if config/agent-pricing.json is absent and the cost block

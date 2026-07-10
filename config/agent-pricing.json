@@ -1,6 +1,6 @@
 {
-  "_comment": "USD per 1M tokens. Update when model pricing changes. 'agent_default_model' maps --agent values to a model id in 'models'. opencode/<model> parses the <model> segment and looks it up in 'models'; unknown models fall back to opencode-default.",
-  "updated_at": "2026-05-24",
+  "_comment": "USD per 1M tokens. Update when model pricing changes. 'agent_default_model' maps --agent values to a model id in 'models'. <agent>/<model> (claude/codex/opencode/antigravity) parses the <model> segment and looks it up in 'models'; an unknown model buckets by keyword into generic-flash/pro/premium-default (opencode/<model> keeps its opencode-default fallback).",
+  "updated_at": "2026-07-09",
   "models": {
     "claude-sonnet-4-5": {
       "label": "Claude Sonnet 4.5",
@@ -46,6 +46,21 @@
       "label": "Gemini 2.5 Pro",
       "input_per_mtok": 1.25,
       "output_per_mtok": 10.00
+    },
+    "generic-flash-default": {
+      "label": "generic flash/mini class (keyword-matched)",
+      "input_per_mtok": 0.075,
+      "output_per_mtok": 0.30
+    },
+    "generic-pro-default": {
+      "label": "generic pro class (keyword-matched)",
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.00
+    },
+    "generic-premium-default": {
+      "label": "generic premium class (keyword-matched)",
+      "input_per_mtok": 15.00,
+      "output_per_mtok": 75.00
     }
   },
   "agent_default_model": {

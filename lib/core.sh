@@ -254,10 +254,18 @@ validate_agent() {
   local agent="$1"
   case "$agent" in
     claude|codex|spark|sparc|opencode|antigravity) ;;
-    opencode/*)
-      [[ -n "${agent#opencode/}" ]] || die "Invalid agent: $agent (missing model after 'opencode/')."
+    claude/*|codex/*|opencode/*|antigravity/*)
+      # <agent>/<model> targets a specific model on the CLI (issue #384). The
+      # empty-model guard mirrors the original opencode/* one so a trailing slash
+      # (a typo) never silently routes to a blank model.
+      [[ -n "${agent#*/}" ]] || die "Invalid agent: $agent (missing model after '${agent%%/*}/')."
       ;;
-    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, opencode, opencode/<model>, or antigravity)" ;;
+    spark/*|sparc/*)
+      # spark/sparc are fixed presets (hardcoded -m gpt-5.3-codex-spark); a
+      # /model suffix would fight the preset, so it is rejected with a hint.
+      die "Invalid agent: $agent (spark/sparc are fixed presets; use codex/<model> to target a specific model)"
+      ;;
+    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, opencode, antigravity, or <agent>/<model> for claude/codex/opencode/antigravity)" ;;
   esac
 }
 
@@ -268,10 +276,10 @@ validate_agent() {
 require_agent_cmd() {
   local agent="$1"
   case "$agent" in
-    claude) require_cmd claude ;;
-    codex|spark|sparc) require_cmd codex ;;
+    claude|claude/*) require_cmd claude ;;
+    codex|codex/*|spark|sparc) require_cmd codex ;;
     opencode|opencode/*) require_cmd opencode ;;
-    antigravity) require_cmd agy ;;
+    antigravity|antigravity/*) require_cmd agy ;;
     *) die "Internal error: unsupported agent '$agent' for command check" ;;
   esac
 }
@@ -371,12 +379,12 @@ resolve_agent_timeout() {
   local agent_var=""
 
   case "$agent" in
-    claude) agent_vars=(REPOLENS_AGENT_TIMEOUT_CLAUDE) ;;
-    codex) agent_vars=(REPOLENS_AGENT_TIMEOUT_CODEX) ;;
+    claude|claude/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_CLAUDE) ;;
+    codex|codex/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_CODEX) ;;
     spark) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARK REPOLENS_AGENT_TIMEOUT_SPARC) ;;
     sparc) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARC REPOLENS_AGENT_TIMEOUT_SPARK) ;;
     opencode|opencode/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_OPENCODE) ;;
-    antigravity) agent_vars=(REPOLENS_AGENT_TIMEOUT_ANTIGRAVITY) ;;
+    antigravity|antigravity/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_ANTIGRAVITY) ;;
     "") ;;
     *) ;;
   esac
@@ -450,10 +458,22 @@ run_agent() {
     fi
 
     case "$agent" in
-      claude)
+      claude|claude/*)
+        # <agent>/<model> selects a model via `claude --model <model>` (issue
+        # #384). The flag goes BEFORE -p "$prompt" and leaves the JSON-envelope
+        # path (--output-format json + .result extraction) untouched. For bare
+        # claude the array is empty, so the argv is byte-for-byte unchanged. The
+        # "${a[@]+"${a[@]}"}" expansion is required for the empty case: a plain
+        # "${a[@]}" aborts with "unbound variable" under set -u on bash < 4.4
+        # (the project floor is 4.0), so the alternate form keeps bare claude
+        # working on every supported bash.
+        local claude_model_args=()
+        if [[ "$agent" == claude/* ]]; then
+          claude_model_args=(--model "${agent#claude/}")
+        fi
         local raw raw_json rc
         raw="$(
-          timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" claude --dangerously-skip-permissions --output-format json -p "$prompt" 2>&1
+          timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" claude --dangerously-skip-permissions "${claude_model_args[@]+"${claude_model_args[@]}"}" --output-format json -p "$prompt" 2>&1
         )"
         rc=$?
 
@@ -476,6 +496,11 @@ run_agent() {
       codex)
         timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo "$prompt"
         ;;
+      codex/*)
+        # `codex exec -m <model>` is the proven model-selection flag (the spark
+        # preset below already uses -m), so codex/<model> reuses it (issue #384).
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo -m "${agent#codex/}" "$prompt"
+        ;;
       spark|sparc)
         timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo -m gpt-5.3-codex-spark -c reasoning_effort="xhigh" "$prompt"
         ;;
@@ -488,6 +513,11 @@ run_agent() {
         ;;
       antigravity)
         timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" agy --dangerously-skip-permissions -p "$prompt"
+        ;;
+      antigravity/*)
+        # antigravity/<model> selects a model via `agy --model <model>` (issue
+        # #384), keeping the autonomy + headless -p flags proven by #383.
+        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" agy --dangerously-skip-permissions --model "${agent#antigravity/}" -p "$prompt"
         ;;
       *)
         die "Internal error: unsupported agent '$agent'"
