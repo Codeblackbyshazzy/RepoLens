@@ -136,6 +136,31 @@ _ledger_severity_normalize() {
   esac
 }
 
+# _ledger_complexity_normalize <value>
+#   Canonicalizes a task-complexity estimate (issue #385) to an INTEGER 1..5
+#   (printed as a bare digit) or "" for anything else — absent, out-of-range
+#   (0, 6, 7, ...), non-integer (2.5), or non-numeric. Trims surrounding
+#   whitespace and strips one surrounding pair of matching quotes first, so a
+#   YAML-quoted "5" normalizes exactly like a bare 5. Complexity is an
+#   orthogonal, OPTIONAL routing tier AUTHORED by the audit model; bash only
+#   parses and range-checks it — it never scores or infers it (no LLM logic in
+#   the tool, per CLAUDE.md). Out-of-range is REJECTED to "" rather than clamped
+#   so a miscalibrated model surfaces as null, not a false-legal tier. Pure;
+#   set -u safe with a missing/empty arg.
+_ledger_complexity_normalize() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#\"}"; value="${value%\"}"
+  value="${value#\'}"; value="${value%\'}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  case "$value" in
+    1|2|3|4|5) printf '%s' "$value" ;;
+    *) printf '' ;;
+  esac
+}
+
 # _ledger_finding_type_normalize <value>
 #   Canonicalizes a raw finding-TYPE string to one of the six closed taxonomy
 #   ids (or "" for unknown). Prefers the shared finding_type_normalize
@@ -263,7 +288,7 @@ build_findings_jsonl_from_manifest() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local count i entry domain lens title raw_sev sev vstatus status id raw_type ftype
+  local count i entry domain lens title raw_sev sev vstatus status id raw_type ftype cx
   count="$(jq 'length' "$manifest")" || { rm -f "$tmp"; return 1; }
   for (( i = 0; i < count; i++ )); do
     entry="$(jq -c --argjson i "$i" '.[$i]' "$manifest")" || { rm -f "$tmp"; return 1; }
@@ -276,6 +301,11 @@ build_findings_jsonl_from_manifest() {
     # normally "" and the type resolves purely from the cluster's domain — the
     # read is defensive/future-proof in case a manifest ever adds one (#344).
     raw_type="$(jq -r '.type // ""' <<<"$entry")"
+    # Complexity (#385): optional 1..5 routing tier authored by the synthesizer.
+    # Absent/out-of-range normalizes to "" -> stored as null (parity with the
+    # nullable confidence slot). tostring so a JSON number reaches the normalizer
+    # as its bare digits.
+    cx="$(_ledger_complexity_normalize "$(jq -r '.complexity // "" | tostring' <<<"$entry")")"
 
     id="$(finding_id "$domain" "$lens" "$title")"
     sev="$(_ledger_severity_normalize "$raw_sev")"
@@ -288,7 +318,8 @@ build_findings_jsonl_from_manifest() {
 
     jq -cn \
       --argjson entry "$entry" \
-      --arg id "$id" --arg severity "$sev" --arg status "$status" --arg ftype "$ftype" '
+      --arg id "$id" --arg severity "$sev" --arg status "$status" --arg ftype "$ftype" \
+      --arg complexity "$cx" '
       {
         id: $id,
         title: ($entry.title // ""),
@@ -302,6 +333,7 @@ build_findings_jsonl_from_manifest() {
         duplicate_group: ($entry.cluster_id // null),
         markdown_path: null,
         validation: {},
+        complexity: (if $complexity == "" then null else ($complexity | tonumber) end),
         source_finding_paths: ($entry.source_finding_paths // [])
       }' >> "$tmp" || { rm -f "$tmp"; return 1; }
   done
@@ -411,7 +443,7 @@ build_findings_jsonl_from_local() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local file rel title severity domain lens id sev type_raw ftype
+  local file rel title severity domain lens id sev type_raw ftype cx
   while IFS= read -r -d '' file; do
     # Skip + warn (not fatal) when there is no valid leading frontmatter block.
     if ! _ledger_has_frontmatter "$file"; then
@@ -424,6 +456,10 @@ build_findings_jsonl_from_local() {
     domain="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" domain)")"
     lens="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" lens)")"
     type_raw="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" type)")"
+    # Complexity (#385): optional 1..5 routing tier from the finding frontmatter.
+    # The normalizer trims/de-quotes and range-checks; absent or out-of-range
+    # yields "" -> stored as null (parity with the nullable confidence slot).
+    cx="$(_ledger_complexity_normalize "$(_ledger_frontmatter_scalar "$file" complexity)")"
 
     # Directory fallback only when the <domain>/<lens> nesting actually exists.
     # rel like <domain>/<lens>/NNN-x.md has 3+ path components; a flat file does
@@ -442,7 +478,8 @@ build_findings_jsonl_from_local() {
 
     jq -cn \
       --arg id "$id" --arg title "$title" --arg severity "$sev" \
-      --arg domain "$domain" --arg lens "$lens" --arg md "$file" --arg ftype "$ftype" '
+      --arg domain "$domain" --arg lens "$lens" --arg md "$file" --arg ftype "$ftype" \
+      --arg complexity "$cx" '
       {
         id: $id,
         title: $title,
@@ -455,7 +492,8 @@ build_findings_jsonl_from_local() {
         confidence: null,
         duplicate_group: null,
         markdown_path: $md,
-        validation: {}
+        validation: {},
+        complexity: (if $complexity == "" then null else ($complexity | tonumber) end)
       }' >> "$tmp" || { rm -f "$tmp"; return 1; }
   done < <(find "$dir" -type f -name '*.md' -print0 | LC_ALL=C sort -z)
 
@@ -464,14 +502,14 @@ build_findings_jsonl_from_local() {
 
 # build_findings_csv <findings_jsonl_path> <out_csv_path>
 #   Projects the canonical finding registry (findings.jsonl, schema in
-#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 11-column header
+#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
 #   row, then one row per JSONL line, preserving JSONL line order
 #   (deterministic). Spreadsheet/grep users get a flat view without a second
 #   source of truth — findings.jsonl stays the full-fidelity registry.
 #
 #   Columns (exactly, in this order):
 #     id,title,severity,type,domain,lens,status,primary_location,confidence,
-#     duplicate_group,markdown_path
+#     duplicate_group,markdown_path,complexity
 #   The nested `validation` object and the `source_finding_paths` array are
 #   OMITTED — they don't flatten to a single cell. Keep this column list in
 #   lockstep with the jq array below; the header string and the array are two
@@ -495,9 +533,11 @@ build_findings_csv() {
   [[ -f "$in" ]]  || { echo "build_findings_csv: input not found: $in" >&2; return 2; }
 
   local tmp="${out}.tmp.$$"
-  # Header first. Keep this list in lockstep with the jq array below.
+  # Header first. Keep this list in lockstep with the jq array below. `complexity`
+  # (#385) is appended at the END so every pre-existing column index stays stable
+  # for downstream consumers that read the CSV positionally.
   printf '%s\n' \
-    'id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path' \
+    'id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity' \
     > "$tmp" || return 1
 
   # One CSV row per JSONL value (jq streams values in input order). Raw field
@@ -505,7 +545,8 @@ build_findings_csv() {
   # literal "null". An empty input yields zero rows -> header-only CSV, exit 0.
   jq -r '
     [ .id, .title, .severity, .type, .domain, .lens, .status,
-      .primary_location, .confidence, .duplicate_group, .markdown_path ]
+      .primary_location, .confidence, .duplicate_group, .markdown_path,
+      .complexity ]
     | @csv
   ' "$in" >> "$tmp" || { rm -f "$tmp"; return 1; }
 
@@ -584,7 +625,17 @@ validate_findings_jsonl() {
             (if ($v.type != null and $v.type != "") and ((types | index($v.type)) == null)
                then "invalid type: \($v.type | tostring)" else empty end),
             (if ($v | has("validation")) and (($v.validation | type) != "object")
-               then "validation must be an object" else empty end)
+               then "validation must be an object" else empty end),
+            # complexity (#385) is OPTIONAL + nullable (mirrors confidence): an
+            # absent key or an explicit null is fine. When present and non-null it
+            # must be an INTEGER 1..5 — a non-number, out-of-range (0, 6, ...), or
+            # fractional (2.5) value is a violation. NOT added to the required-keys
+            # list above so pre-existing / hand-authored records stay valid.
+            (if ($v | has("complexity")) and ($v.complexity != null)
+                and (($v.complexity | type) != "number"
+                     or $v.complexity < 1 or $v.complexity > 5
+                     or $v.complexity != ($v.complexity | floor))
+               then "invalid complexity: \($v.complexity | tostring)" else empty end)
           )
       end
     ' <<<"$line" 2>/dev/null)"

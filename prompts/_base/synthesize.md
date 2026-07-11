@@ -101,6 +101,7 @@ Emit a single valid JSON array with entries shaped exactly like this. Do not wra
     "cluster_id": "string - stable hash of (root_cause_category + sorted suspect_files)",
     "title": "string - '[severity] <imperative title>'",
     "severity": "critical | high | medium | low",
+    "complexity": "integer 1-5 - implementation effort to fix (orthogonal to severity)",
     "domain": "string - the lens domain that surfaced this finding",
     "lens": "string - the lens id that surfaced this finding",
     "root_cause_category": "string - taxonomy term (e.g. 'race-condition', 'missing-validation', 'config-drift')",
@@ -125,11 +126,12 @@ Field requirements:
 - `cluster_id`: stable lowercase identifier derived from `root_cause_category` plus sorted `suspect_files`.
 - `title`: severity-prefixed imperative title, for example `[high] Validate upload filenames before writing files`.
 - `severity`: one of `critical`, `high`, `medium`, or `low`.
+- `complexity`: integer 1-5 estimating the IMPLEMENTATION EFFORT to fix — how hard the fix is, NOT how bad the problem is. ORTHOGONAL to severity (a `critical` leaked secret may be complexity 1; a `low` cross-cutting refactor may be complexity 4). `1` Trivial (typo/comment/i18n/formatting), `2` Easy (localized single-file bugfix), `3` Medium (standard function/component + a unit test), `4` High (multi-file/API change, major refactor), `5` Critical/Complex (architecture shift, multi-service protocol, state machine). Also add the matching `repolens/complexity/<n>` entry to `proposed_labels[]` and a `- **Complexity:** <n> (<Descriptor>)` metadata line in `body`.
 - `domain`: lens domain that produced or best classifies the finding (matches a domain in `config/domains.json`).
 - `lens`: lens id that produced or best classifies the finding (matches the lens directory under `prompts/lenses/<domain>/<lens>.md`). For merged entries, choose the most specific lens that anchors the recommended fix.
 - `source_finding_paths[]`: every source finding path that contributed to this entry.
 - `dedup_against_existing[]`: entries with `{issue_number, reason}` for matching open issues.
-- `proposed_labels[]`: include `bug` when appropriate plus any useful lens/domain labels from the evidence.
+- `proposed_labels[]`: include `bug` when appropriate plus any useful lens/domain labels from the evidence, AND the `repolens/complexity/<n>` label matching your `complexity` estimate (the filing agent applies every label verbatim).
 - `cross_link_actions[]`: entries with `{type, issue_number, body}`; supported types are `comment` and `reopen-suggestion`.
 - `granularity`: exactly `independent` or `cluster`.
 - `verification_status`: optional. One of `verified`, `stale`, or `unknown`. Derived from `verification.json` per the "Verification gate" section. When verification.json is absent, set to `unknown` or omit (the validator treats omitted as `unknown`).

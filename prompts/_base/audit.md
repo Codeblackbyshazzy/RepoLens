@@ -13,6 +13,7 @@ Your task is to find **real, actionable issues** in this codebase within your ar
 - Create ONE issue at a time.
 - Prefix the title with severity: `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, or `[LOW]`
 - Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
+- Estimate the fix's implementation complexity (1-5, see "Task Complexity" below) and apply the label `repolens/complexity/<n>` (e.g. `repolens/complexity/3`). These five labels are pre-created by RepoLens, so just apply the right one — no need to create it.
 - You may also apply any other existing repository labels you judge useful.
 
 {{MIN_SEVERITY_SECTION}}
@@ -30,6 +31,7 @@ Every issue MUST be scoped so that a human developer can complete it in approxim
 Every issue MUST have this structure:
 - **Summary** — What the problem is and where it occurs (file paths, line numbers)
 - **Impact** — Why this matters (security risk, performance cost, maintenance burden, etc.)
+- **Complexity** — A single metadata line `- **Complexity:** <n> (<Descriptor>)` where `<n>` is your 1-5 estimate and `<Descriptor>` is `Trivial` (1), `Easy` (2), `Medium` (3), `High` (4), or `Critical/Complex` (5). This MUST match the `repolens/complexity/<n>` label you applied. See "Task Complexity" below.
 - **Evidence** — Code snippets, specific file:line references, reproduction steps
 - **Recommended Fix** — Concrete, actionable remediation steps a developer can complete in ~1 hour
 - **References** — Links to relevant standards, documentation, or best practices
@@ -40,6 +42,14 @@ Every issue MUST have this structure:
   - `preconditions` — what must hold for the issue to trigger
   - `proof_anchors` — EXACT `file:line` references from THIS repository and/or short code quotes that prove the claim
   - `suggested_validation` — a concrete shell command OR test that confirms the finding; a single runnable command when the finding is locally checkable
+
+### Task Complexity — 1-5 Estimate
+Estimate the IMPLEMENTATION EFFORT to fix the finding on a 1-5 scale — how hard the fix is, NOT how bad the problem is. Complexity is ORTHOGONAL to severity: a `[CRITICAL]` leaked secret may be complexity 1 (rotate + one-line `.gitignore`), while a `[LOW]` cross-cutting refactor may be complexity 4. Downstream automation routes each fix to a cost/capability model tier by this number, so calibrate honestly:
+- **1 (Trivial):** typos, comments, string/i18n translations, formatting.
+- **2 (Easy):** localized edits, unused variables, single-file bugfixes with no side effects.
+- **3 (Medium):** standard component/function implementation, a simple unit test.
+- **4 (High):** multi-file synchronization, API changes, complex hooks, major refactoring.
+- **5 (Critical/Complex):** core architecture shifts, multi-service protocol updates, state machines.
 
 ### How to Fill the `## Validation` Block
 The fields above are a contract; the points below are the quality bar for each. A block that is present but vague is worthless — downstream tooling and reviewers cannot act on it.

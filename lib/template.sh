@@ -540,6 +540,7 @@ Each markdown file must contain YAML frontmatter followed by the finding body:
 title: \"[SEVERITY] Finding title\"
 severity: critical|high|medium|low
 type: security-vulnerability|reliability-bug|performance-risk|maintainability|test-gap|external-dependency
+complexity: 1|2|3|4|5
 domain: <domain>
 lens: <lens-id>
 labels:
@@ -571,6 +572,13 @@ labels:
 \`\`\`
 
 The \`type:\` field is REQUIRED: pick the single best-fit finding type from the closed taxonomy (\`security-vulnerability\`, \`reliability-bug\`, \`performance-risk\`, \`maintainability\`, \`test-gap\`, \`external-dependency\`). Type is orthogonal to severity — a finding of any severity can be any type, so choose the type by what KIND of problem it is, not how bad it is. Use \`external-dependency\` for CVE or otherwise scanner-validatable third-party dependency findings.
+
+The \`complexity:\` field is a single integer 1-5 estimating the IMPLEMENTATION EFFORT to fix this finding — how hard the fix is, NOT how bad the problem is. It is ORTHOGONAL to severity: a \`critical\` leaked secret may be complexity 1 (rotate + one-line \`.gitignore\`), while a \`low\` cross-cutting refactor may be complexity 4. Downstream automation routes each fix to a model tier by this number, so calibrate honestly against this rubric:
+- **1 (Trivial):** typos, comments, string/i18n translations, formatting.
+- **2 (Easy):** localized edits, unused variables, single-file bugfixes with no side effects.
+- **3 (Medium):** standard component/function implementation, a simple unit test.
+- **4 (High):** multi-file synchronization, API changes, complex hooks, major refactoring.
+- **5 (Critical/Complex):** core architecture shifts, multi-service protocol updates, state machines.
 
 ### Deduplication
 Before writing a new finding, check if a file with a similar title already exists in the output directory. If so, skip the duplicate.

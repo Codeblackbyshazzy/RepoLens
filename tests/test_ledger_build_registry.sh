@@ -26,9 +26,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEDGER_LIB="$SCRIPT_DIR/lib/ledger.sh"
 
-# The exact 11-column CSV header build_findings_csv emits, asserted byte-for-byte
-# (kept in lockstep with lib/ledger.sh::build_findings_csv).
-CSV_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path'
+# The exact 12-column CSV header build_findings_csv emits, asserted byte-for-byte
+# (kept in lockstep with lib/ledger.sh::build_findings_csv). Issue #385 appended
+# `complexity` at the END, keeping every pre-existing column index stable.
+CSV_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity'
 
 PASS=0
 FAIL=0
@@ -273,9 +274,9 @@ assert_file_exists "manifest-only: findings.csv is promoted" "$csv_a"
 lines_a="$(wc -l < "$jsonl_a" | tr -d ' ')"
 assert_eq "manifest-only: 2 manifest clusters -> 2 jsonl lines" "2" "$lines_a"
 
-# CSV header is the exact 11-col contract; data rows == jsonl lines.
+# CSV header is the exact 12-col contract; data rows == jsonl lines.
 header_a="$(head -n1 "$csv_a")"
-assert_eq "manifest-only: csv first line is the 11-col header" "$CSV_HEADER" "$header_a"
+assert_eq "manifest-only: csv first line is the 12-col header" "$CSV_HEADER" "$header_a"
 csv_rows_a=$(( $(wc -l < "$csv_a" | tr -d ' ') - 1 ))
 assert_eq "manifest-only: csv data rows == jsonl line count" "2" "$csv_rows_a"
 
@@ -328,7 +329,7 @@ assert_jq "local-only (param): markdown_path is a non-empty string on every row"
   'all(.[]; .markdown_path | type == "string" and length > 0)' "$records_b" stdin
 
 header_b="$(head -n1 "$csv_b")"
-assert_eq "local-only (param): csv first line is the 11-col header" "$CSV_HEADER" "$header_b"
+assert_eq "local-only (param): csv first line is the 12-col header" "$CSV_HEADER" "$header_b"
 assert_no_litter "local-only (param): no temp/intermediate litter after build" "$LB_B"
 
 echo "=== (b2) local-md-only source (OUTPUT_DIR global) ==="
@@ -432,7 +433,7 @@ assert_eq "no-sources: findings.jsonl is 0 lines" "0" "$lines_d"
 
 csv_lines_d="$(wc -l < "$csv_d" | tr -d ' ')"
 assert_eq "no-sources: findings.csv is header-only (exactly 1 line)" "1" "$csv_lines_d"
-assert_eq "no-sources: the single csv line is the 11-col header" \
+assert_eq "no-sources: the single csv line is the 12-col header" \
   "$CSV_HEADER" "$(head -n1 "$csv_d")"
 assert_no_litter "no-sources: no temp/intermediate litter after build" "$LB_D"
 

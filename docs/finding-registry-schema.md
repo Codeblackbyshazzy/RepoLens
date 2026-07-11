@@ -32,7 +32,7 @@ non-stable grouping handle) with the registry `id` (content-derived, stable).
 
 ## Record schema
 
-One JSON object per line in `findings.jsonl`, with these 12 fields:
+One JSON object per line in `findings.jsonl`, with these 13 fields:
 
 | field | type | allowed values / shape | owner / notes |
 |---|---|---|---|
@@ -48,6 +48,7 @@ One JSON object per line in `findings.jsonl`, with these 12 fields:
 | `duplicate_group` | string or null | opaque group key; `null` when the finding is not part of a duplicate cluster | dedup internals owned by the **dedupe** agent (#316 canonical selection, #322 matching, #335 marking, #353 thresholds, #343 over `--local`). |
 | `markdown_path` | string | path to the `NNN-<slug>.md` file when one exists; `""` (or absent) otherwise | present for `--local` findings; bugreport-only findings may have none. Consumed by triage artifacts and html-report. |
 | `validation` | object | opaque object slot (may be `{}`) | **contents owned by the `validation-hints` agent**: #317 (block contract), #332 (parser → structured object), #345 (proof-anchor validator), #334 (status classifier). This doc records only that the key exists and is an object. |
+| `complexity` | number or null | integer `1`–`5`, or `null` | **optional routing tier authored by the audit model (#385)**. Estimates the implementation *effort* to fix the finding — orthogonal to `severity`. Absent, non-integer, or out-of-range (`0`, `6`, …) normalizes to `null` (rejected, never clamped). Consumed by downstream semantic model routing. |
 
 ### Field details
 
@@ -85,6 +86,15 @@ One JSON object per line in `findings.jsonl`, with these 12 fields:
   `validation-hints` agent.
 - `markdown_path` — path to the human-readable `NNN-<slug>.md` file when one
   exists.
+- `complexity` — optional integer `1`–`5` estimating the implementation
+  **effort** to fix the finding (`1` Trivial, `2` Easy, `3` Medium, `4` High,
+  `5` Critical/Complex), or `null` when the model gave no valid estimate. It is
+  **orthogonal to `severity`**: a `critical` finding can be `complexity` 1 (a
+  one-line fix) and a `low` finding can be `complexity` 4 (a cross-cutting
+  refactor). Authored by the audit model, never computed by RepoLens; an
+  out-of-range value is rejected to `null` rather than clamped. Downstream
+  automation routes each fix to a cheap or flagship model tier by this value
+  (e.g. `gh issue list --label repolens/complexity/1`).
 
 ## Ownership map
 
@@ -105,6 +115,7 @@ authoritative source is the named owner.
 | builder: manifest clusters → `findings.jsonl` | **#314** |
 | builder: `--local` md frontmatter → `findings.jsonl` | **#319** |
 | `findings.csv` flat projection | **#324** |
+| `complexity` estimate + `repolens/complexity/<n>` routing labels | **#385** |
 | schema validator + test | **#329** |
 
 ## `findings.csv`
@@ -117,13 +128,16 @@ authoritative, full-fidelity registry.
 The columns are exactly, in this order:
 
 ```
-id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path
+id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity
 ```
+
+`complexity` is **appended at the end** so every pre-existing column index stays
+stable for consumers that read the CSV positionally.
 
 The `validation` object (and any array field, e.g. `source_finding_paths`) is
 **omitted** — it does not flatten to a single cell; read it from `findings.jsonl`
 when needed. CSV quoting is RFC-4180-safe: a value containing a comma, a double
 quote, or a newline (e.g. a title) is quoted and inner quotes are doubled. A JSON
-`null` or absent field renders as an empty cell; numbers (e.g. `confidence`) are
-unquoted. An empty run produces a **header-only** `findings.csv` (column headers,
+`null` or absent field renders as an empty cell; numbers (e.g. `confidence` and
+`complexity`) are unquoted. An empty run produces a **header-only** `findings.csv` (column headers,
 zero data rows), matching the empty (zero-line) `findings.jsonl`.

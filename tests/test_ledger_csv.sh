@@ -15,7 +15,7 @@
 
 # Tests for issue #324: lib/ledger.sh — build_findings_csv.
 # Projects the canonical finding registry (findings.jsonl, schema in
-# docs/finding-registry-schema.md) onto a flat CSV: a fixed 11-column header
+# docs/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
 # row, then one row per JSONL line, preserving JSONL line order. The nested
 # `validation` object and the `source_finding_paths` array are OMITTED — they
 # don't flatten to a single cell — and findings.jsonl stays the full-fidelity
@@ -29,10 +29,12 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEDGER_LIB="$SCRIPT_DIR/lib/ledger.sh"
 
-# The exact 11-column contract from the issue. Header drift is the one real
-# maintenance hazard for build_findings_csv (the header string and the jq array
-# are two parallel lists), so this is asserted byte-for-byte below.
-EXPECTED_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path'
+# The exact 12-column contract. Header drift is the one real maintenance hazard
+# for build_findings_csv (the header string and the jq array are two parallel
+# lists), so this is asserted byte-for-byte below. Issue #385 appended
+# `complexity` at the END so every pre-existing column index stays stable for
+# downstream consumers that read the CSV positionally.
+EXPECTED_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity'
 
 PASS=0
 FAIL=0
@@ -187,10 +189,10 @@ rc=$?
 assert_success "valid JSONL returns exit 0" "$rc"
 assert_file_exists "findings.csv is created" "$out_csv"
 
-# AC: header row exactly the 11 named columns, in order (first line, byte-exact).
+# AC: header row exactly the 12 named columns, in order (first line, byte-exact).
 got_header=""
 IFS= read -r got_header < "$out_csv"
-assert_eq "header is exactly the 11 named columns, in order" \
+assert_eq "header is exactly the 12 named columns, in order" \
   "$EXPECTED_HEADER" "$got_header"
 
 # AC: header row then one row per JSONL line (header + N data lines).
@@ -236,7 +238,7 @@ import csv, sys
 path = sys.argv[1]
 expected_header = ['id', 'title', 'severity', 'type', 'domain', 'lens',
                    'status', 'primary_location', 'confidence',
-                   'duplicate_group', 'markdown_path']
+                   'duplicate_group', 'markdown_path', 'complexity']
 
 with open(path, newline='') as f:
     reader = csv.DictReader(f)

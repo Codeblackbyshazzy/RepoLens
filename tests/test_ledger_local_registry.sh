@@ -60,8 +60,9 @@ SYNTHESIZE_LIB="$SCRIPT_DIR/lib/synthesize.sh"
 LEDGER_LIB="$SCRIPT_DIR/lib/ledger.sh"
 REPOLENS_SH="$SCRIPT_DIR/repolens.sh"
 
-# The flat 11-column CSV header contract (lib/ledger.sh build_findings_csv).
-CSV_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path'
+# The flat 12-column CSV header contract (lib/ledger.sh build_findings_csv).
+# Issue #385 appended `complexity` at the END (pre-existing indices unchanged).
+CSV_HEADER='id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity'
 
 PASS=0
 FAIL=0
@@ -275,9 +276,9 @@ else
   fail_with "produced findings.jsonl passes validate_findings_jsonl" "validation failed for $JSONL"
 fi
 
-# CSV is the flat 11-column projection (header byte-for-byte).
+# CSV is the flat 12-column projection (header byte-for-byte).
 csv_header="$(head -n1 "$CSV" 2>/dev/null || true)"
-assert_eq "findings.csv carries the canonical 11-column header" "$CSV_HEADER" "$csv_header"
+assert_eq "findings.csv carries the canonical 12-column header" "$CSV_HEADER" "$csv_header"
 
 # AC #2: the registry is under final/; $OUTPUT_DIR stays md-only and final/ holds
 # no md (the deliverable was not copied into the index dir).
