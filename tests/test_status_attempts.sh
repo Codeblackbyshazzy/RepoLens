@@ -43,6 +43,7 @@
 # a PATH-shimmed fake `codex` -> tests/mock-agent.sh (deterministic, no agent),
 # the same technique as tests/test_attempts_json.sh.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

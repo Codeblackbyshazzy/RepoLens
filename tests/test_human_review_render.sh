@@ -47,6 +47,7 @@
 #   a static check of the wiring in repolens.sh (running repolens.sh itself would
 #   invoke real agents — forbidden by the test rules).
 
+# shellcheck disable=SC2030,SC2031 # Subshell-local test state is intentional.
 set -uo pipefail
 # shellcheck disable=SC2329  # helper functions are invoked indirectly
 

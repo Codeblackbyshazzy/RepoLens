@@ -44,6 +44,14 @@ mkdir -p "$TMP_PARENT"
 TMPDIR="$(mktemp -d "$TMP_PARENT/run.XXXXXX")"
 CREATED_RUN_IDS=()
 
+FAKE_BIN="$TMPDIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+for _agent in claude codex opencode agy; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_BIN/$_agent"
+  chmod +x "$FAKE_BIN/$_agent"
+done
+export PATH="$FAKE_BIN:$PATH"
+
 cleanup() {
   local run_id
   rm -rf "$TMPDIR"

@@ -19,6 +19,7 @@
 
 # shellcheck disable=SC2329  # cb_* callbacks are invoked indirectly via spawn_lens string dispatch.
 
+# shellcheck disable=SC2218 # Pre-definition calls intentionally use sourced implementations.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -269,6 +269,8 @@ if [[ ! -f "$REMOTE_KEY" || ! -f "$REMOTE_PUBKEY" ]]; then
   exit 1
 fi
 
+chmod 600 "$REMOTE_KEY"
+
 HOME_DIR="$TMPDIR/home"
 SSH_DIR="$HOME_DIR/.ssh"
 KNOWN_HOSTS="$SSH_DIR/known_hosts"

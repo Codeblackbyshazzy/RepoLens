@@ -18,6 +18,7 @@
 # HYPOTHESES_TO_VERIFY do. Without the allow-list entry the @/path string is
 # emitted verbatim instead of being expanded to the bug-report body.
 
+# shellcheck disable=SC1091 # Source paths are resolved from the repository root at runtime.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

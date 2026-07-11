@@ -37,6 +37,7 @@
 #   (running repolens.sh itself would invoke real agents — forbidden by the test
 #   rules), then statically assert the wiring is present in repolens.sh.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 # shellcheck disable=SC2329  # helper functions are invoked indirectly
 

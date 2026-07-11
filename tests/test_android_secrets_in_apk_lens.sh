@@ -22,6 +22,7 @@
 #   - Decode output goes under a private per-run scratch tree and is cleaned up,
 #     never fixed shared paths for secret-bearing APK contents.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

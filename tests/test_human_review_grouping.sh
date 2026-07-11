@@ -30,6 +30,7 @@
 #   cleanly with NO <details> blocks. Findings from buckets 1–4 never leak into
 #   the remainder (membership is owned by the out-of-scope bucketizer).
 
+# shellcheck disable=SC2030,SC2031 # Subshell-local test state is intentional.
 set -uo pipefail
 # shellcheck disable=SC2329  # helper functions are invoked indirectly
 

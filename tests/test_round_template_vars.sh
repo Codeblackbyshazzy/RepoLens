@@ -15,6 +15,7 @@
 
 # Tests for issue #149: round prompt variables and pipe-safe context rendering.
 
+# shellcheck disable=SC1091,SC2034,SC2329 # Runtime sources consume test globals and indirect helpers.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

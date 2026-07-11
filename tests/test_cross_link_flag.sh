@@ -27,6 +27,7 @@
 #   7. Tripwire: no auto-reopen primitive exists anywhere in lib/ or
 #      prompts/_base/.
 
+# shellcheck disable=SC2034 # Test globals are consumed by sourced modules.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -159,7 +159,7 @@ emit_manifest() {
 }
 
 emit_filing_sentinel() {
-  local prompt="$1" run_id cluster_id log_base filed_dir
+  local prompt="$1" run_id cluster_id filed_dir
 
   log_role "filing"
   run_id="$(extract_first_match 'This run is `([^`]+)`' "$prompt")"

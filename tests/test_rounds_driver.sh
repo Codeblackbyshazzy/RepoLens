@@ -20,6 +20,7 @@
 #
 # shellcheck disable=SC2034  # Test globals are read by the sourced rounds module.
 
+# shellcheck disable=SC2218 # Pre-definition calls intentionally use sourced implementations.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

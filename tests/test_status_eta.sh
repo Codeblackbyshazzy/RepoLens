@@ -21,6 +21,7 @@
 # positive on every machine/clock. Each case uses a fresh log dir so the
 # running-over-terminal skip guard never trips.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

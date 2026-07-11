@@ -17,12 +17,15 @@
 # expose a known retry timestamp, while stale retry metadata is hidden for
 # every other terminal state.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 # shellcheck source=tests/status_test_lib.sh
 source "$SCRIPT_DIR/tests/status_test_lib.sh"
+# shellcheck disable=SC1091
+# shellcheck source=lib/status.sh
 source "$SCRIPT_DIR/lib/status.sh"
 trap status_cleanup EXIT
 

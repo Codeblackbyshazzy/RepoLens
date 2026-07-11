@@ -142,7 +142,7 @@ filing_verify_cluster_citations() {
   fi
 
   local citation path line_spec lstart lend file_path line_count snippet
-  local snippet_pattern context_start context_end snippet_re
+  local snippet_pattern context_start context_end
   while IFS= read -r citation; do
     [[ -n "$citation" ]] || continue
     path="${citation%:*}"
@@ -414,8 +414,8 @@ _filing_cross_link_enact() {
   # at most once even when multiple clusters flag the same existing issue.
   local -A seen=()
 
-  local line cluster_id idx action_type issue_number body key sentinel_done sentinel_failed body_file rc
-  while IFS=$'\t' read -r cluster_id idx action_type issue_number body; do
+  local cluster_id action_type issue_number body key sentinel_done sentinel_failed body_file rc
+  while IFS=$'\t' read -r cluster_id _ action_type issue_number body; do
     [[ -n "$action_type" && -n "$issue_number" ]] || continue
 
     # JSON-escaped \n is literal in TSV; restore newlines and the few JSON

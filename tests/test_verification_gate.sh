@@ -34,6 +34,7 @@
 # All test artifacts live under tests/logs/test-verification-gate/ so the
 # repo stays clean. No real agent, forge, or network call is performed.
 
+# shellcheck disable=SC2329 # Helpers are invoked indirectly by the test harness.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -16,6 +16,7 @@
 # Issue #250 — size-based log rotation governed by REPOLENS_LOG_MAX_BYTES
 # and REPOLENS_LOG_KEEP. Only the init_logging owner PID rotates.
 
+# shellcheck disable=SC2030,SC2031 # Each case intentionally isolates state in a subshell.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

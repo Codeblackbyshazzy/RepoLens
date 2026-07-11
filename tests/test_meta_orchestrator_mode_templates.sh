@@ -15,6 +15,7 @@
 
 # Tests for issue #158: mode-specific degraded meta-orchestrator templates.
 
+# shellcheck disable=SC1091,SC2034 # Runtime sources consume these test globals.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -106,7 +107,8 @@ run_agent() {
 }
 
 render_meta_prompt_for_mode() {
-  local mode="$1" run_id="mode-template-$mode"
+  local mode="$1"
+  local run_id="mode-template-$mode"
 
   RUN_ID="$run_id"
   LOG_BASE="$TMPDIR/logs-$mode"

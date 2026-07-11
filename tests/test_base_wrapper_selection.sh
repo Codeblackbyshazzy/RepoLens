@@ -30,6 +30,7 @@
 #      warning rather than failing the run. (Until sibling #92 lands the
 #      android.md file, deploy mode against an APK target must still run.)
 
+# shellcheck disable=SC2034 # Test globals are consumed by sourced modules.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

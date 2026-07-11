@@ -16,6 +16,7 @@
 # Tests for issue #154: meta-orchestrator dispatch parsing and handoff.
 # shellcheck disable=SC2034,SC2329
 
+# shellcheck disable=SC2218 # Pre-definition calls intentionally use the sourced implementation.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

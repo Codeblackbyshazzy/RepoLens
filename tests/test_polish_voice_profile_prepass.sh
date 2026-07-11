@@ -15,6 +15,7 @@
 
 # Tests for issue #294: polish voice profile pre-pass.
 
+# shellcheck disable=SC1091,SC2034 # Runtime sources consume these test globals.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

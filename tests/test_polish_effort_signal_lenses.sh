@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # Tests for issues #297 and #298: polish-mode effort-signal domain and lenses.
+# shellcheck disable=SC1091 # Source paths are resolved from the repository root at runtime.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

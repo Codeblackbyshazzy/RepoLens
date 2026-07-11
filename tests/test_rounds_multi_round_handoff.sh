@@ -249,7 +249,7 @@ assert_jq "manifest entries match synthesizer schema core fields" "$manifest" '
 assert_eq "mock agent handled three lens prompts" "3" "$(grep -c '^lens$' "$MOCK_LOG" 2>/dev/null || printf '0')"
 assert_eq "mock agent handled two meta prompts" "2" "$(grep -c '^meta$' "$MOCK_LOG" 2>/dev/null || printf '0')"
 assert_eq "mock agent handled one synthesizer prompt" "1" "$(grep -c '^synthesizer$' "$MOCK_LOG" 2>/dev/null || printf '0')"
-assert_eq "local multi-round run does not invoke filing agent" "0" "$(grep '^filing$' "$MOCK_LOG" 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "local multi-round run does not invoke filing agent" "0" "$(grep -c '^filing$' "$MOCK_LOG" 2>/dev/null || true)"
 assert_file_absent "local multi-round run does not write filing marker" "$RUN_LOG_DIR/final/filed/mock-round-handoff.url"
 
 finish
